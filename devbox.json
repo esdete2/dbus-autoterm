@@ -10,35 +10,32 @@
       "export PATH=\"$DEVBOX_PYTHON_VENV/bin:$PATH\""
     ],
     "scripts": {
-      "test:emulation": [
-        "PYTHONPATH=emulation python3 -m unittest discover -s emulation/tests -v"
-      ],
-      "test:dbus-autoterm": [
-        "PYTHONPATH=dbus-autoterm:emulation python3 -m unittest discover -s dbus-autoterm/tests -v"
-      ],
-      "test": [
-        "devbox run test:emulation",
-        "devbox run test:dbus-autoterm"
-      ],
-      "run:emulation:pty": [
-        "PYTHONPATH=emulation python3 -m emulator --transport pty"
-      ],
-      "run:emulation:gpio": [
-        "PYTHONPATH=emulation python3 -m emulator --transport serial --device /dev/serial0"
-      ],
-      "run:dbus-autoterm:dummy": [
+      "dbus-autoterm:run:dummy": [
         "PYTHONPATH=dbus-autoterm python3 -m app --backend=dummy --mock-dbus"
       ],
-      "check:emulation": [
-        "PYTHONPATH=emulation python3 -m compileall emulation"
-      ],
-      "check:dbus-autoterm": [
+      "dbus-autoterm:check": [
         "PYTHONPATH=dbus-autoterm python3 -m compileall dbus-autoterm"
       ],
-      "check": [
-        "devbox run check:emulation",
-        "devbox run check:dbus-autoterm"
-      ]
+      "dbus-autoterm:test": [
+        "PYTHONPATH=dbus-autoterm:emulation python3 -m unittest discover -s dbus-autoterm/tests -v"
+      ],
+
+      "emulation:run:pty": [
+        "PYTHONPATH=emulation python3 -m emulator --transport pty"
+      ],
+      "emulation:run:gpio": [
+        "PYTHONPATH=emulation python3 -m emulator --transport serial --device /dev/serial0"
+      ],
+      "emulation:check": [
+        "PYTHONPATH=emulation python3 -m compileall emulation"
+      ],
+      "emulation:test": [
+        "PYTHONPATH=emulation python3 -m unittest discover -s emulation/tests -v"
+      ],
+
+      "test": ["devbox run emulation:test", "devbox run dbus-autoterm:test"],
+      "check": ["devbox run emulation:check", "devbox run dbus-autoterm:check"],
+      "package": ["make package"]
     }
   }
 }

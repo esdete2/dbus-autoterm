@@ -15,6 +15,7 @@
 
 ## Devbox Commands
 - Devbox shell bootstraps a project-local venv at `.devbox/venv` and prepends it to `PATH`, so `python`, `pip`, and installed console scripts come from the same environment.
+- `make package`: assemble the offline-installable `dbus-autoterm.tar.gz` artifact in `dist/` and populate ignored `dbus-autoterm/ext/`
 - `devbox run install:emulation`: install the emulation package with serial extras into the devbox venv
 - `devbox run install:dbus-autoterm`: install the driver package with serial extras into the devbox venv
 - `devbox run install:all`: install both packages into the devbox venv

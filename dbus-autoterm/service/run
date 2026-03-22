@@ -14,7 +14,7 @@ cd "$APP_ROOT"
 # Keep the service runtime direct and packaging-independent on Venus OS.
 export PYTHONUNBUFFERED=1
 export PYTHONDONTWRITEBYTECODE=1
-export PYTHONPATH="$APP_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$APP_ROOT:$APP_ROOT/ext:$APP_ROOT/ext/velib_python:$APP_ROOT/ext/pyserial${PYTHONPATH:+:$PYTHONPATH}"
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
     echo "Missing Python runtime: $PYTHON_BIN"
