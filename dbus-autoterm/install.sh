@@ -39,34 +39,6 @@ if ! "$PYTHON_BIN" -m py_compile \
     exit 1
 fi
 
-if ! "$PYTHON_BIN" -c '
-import sys
-from pathlib import Path
-
-app_root = Path(sys.argv[1])
-candidates = (
-    app_root / "ext" / "velib_python",
-    Path("/opt/victronenergy/dbus-systemcalc-py/ext/velib_python"),
-    Path("/opt/victronenergy/dbus-systemcalc-py/velib_python"),
-)
-for candidate in candidates:
-    if candidate.exists():
-        candidate_str = str(candidate)
-        if candidate_str not in sys.path:
-            sys.path.insert(1, candidate_str)
-
-import dbus
-from gi.repository import GLib
-from vedbus import VeDbusService
-
-assert dbus is not None
-assert GLib is not None
-assert VeDbusService is not None
-' "$SCRIPT_DIR" >/dev/null 2>&1; then
-    echo "Missing runtime prerequisites. Venus OS must provide dbus, GLib, and vedbus, or velib_python must be available under $SCRIPT_DIR/ext/velib_python."
-    exit 1
-fi
-
 if [ ! -f "$RC_LOCAL" ]; then
     {
         echo "#!/bin/bash"

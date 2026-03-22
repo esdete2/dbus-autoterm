@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import time
 from configparser import ConfigParser
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -137,12 +136,8 @@ def _build_runtime_config(args: argparse.Namespace, arg_list: list[str], config:
     )
 
 
-def _run_with_glib(app: HeaterDriverApp, poll_interval: float, mock_dbus: bool) -> bool:
-    del mock_dbus
-    try:
-        from gi.repository import GLib
-    except ImportError:
-        return False
+def _run_with_glib(app: HeaterDriverApp, poll_interval: float) -> None:
+    from gi.repository import GLib
 
     interval_ms = max(100, int(poll_interval * 1000))
     loop = GLib.MainLoop()
@@ -156,25 +151,13 @@ def _run_with_glib(app: HeaterDriverApp, poll_interval: float, mock_dbus: bool) 
 
     GLib.timeout_add(interval_ms, _poll)
     loop.run()
-    return True
-
-
-def _run_with_sleep_loop(app: HeaterDriverApp, poll_interval: float) -> None:
-    while True:
-        try:
-            app.run_once()
-        except Exception:
-            LOG.exception("poll cycle failed")
-        time.sleep(poll_interval)
 
 
 def _configure_venus_dbus_runtime(mock_dbus: bool) -> bool:
     try:
         from gi.repository import GLib
     except ImportError as exc:
-        if mock_dbus:
-            return False
-        raise RuntimeError("GLib is required for the real D-Bus runtime") from exc
+        raise RuntimeError("GLib is required for the dbus-autoterm runtime") from exc
 
     if not mock_dbus:
         try:
@@ -208,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     runtime = _build_runtime_config(args, arg_list, config)
 
     logging.basicConfig(level=getattr(logging, str(runtime.log_level).upper(), logging.INFO))
-    glib_available = _configure_venus_dbus_runtime(runtime.mock_dbus)
+    _configure_venus_dbus_runtime(runtime.mock_dbus)
 
     if runtime.backend == "dummy":
         provider = DummyHeaterProvider()
@@ -219,11 +202,7 @@ def main(argv: list[str] | None = None) -> int:
 
     provider.connect()
     service = MockVeDbusService(runtime.driver_config.service_name) if runtime.mock_dbus else None
-    dbus_adapter = GeneratorDbusAdapter(
-        config=runtime.driver_config,
-        service=service,
-        allow_mock_fallback=runtime.mock_dbus,
-    )
+    dbus_adapter = GeneratorDbusAdapter(config=runtime.driver_config, service=service)
     app = HeaterDriverApp(provider, dbus_adapter)
     dbus_adapter._on_startstop = app.startstop
     dbus_adapter._on_mode_change = app.update_mode
@@ -232,13 +211,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         app.run_once()
-        if glib_available and _run_with_glib(app, runtime.poll_interval, runtime.mock_dbus):
-            return 0
-        if runtime.mock_dbus:
-            LOG.warning("GLib runtime unavailable, falling back to a simple polling loop")
-            _run_with_sleep_loop(app, runtime.poll_interval)
-        else:
-            raise RuntimeError("GLib runtime was configured but the GLib main loop could not be started")
+        _run_with_glib(app, runtime.poll_interval)
     except KeyboardInterrupt:
         LOG.info("shutdown requested")
     finally:

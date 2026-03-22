@@ -70,30 +70,21 @@ class MockVeDbusService:
 
 def _prime_vedbus_import_path() -> None:
     app_root = Path(__file__).resolve().parent
-    candidates = (
-        app_root / "ext" / "velib_python",
-        Path("/opt/victronenergy/dbus-systemcalc-py/ext/velib_python"),
-        Path("/opt/victronenergy/dbus-systemcalc-py/velib_python"),
-    )
-    for candidate in candidates:
-        if candidate.exists():
-            candidate_str = str(candidate)
-            if candidate_str not in sys.path:
-                sys.path.insert(1, candidate_str)
+    candidate = app_root / "ext" / "velib_python"
+    if candidate.exists():
+        candidate_str = str(candidate)
+        if candidate_str not in sys.path:
+            sys.path.insert(1, candidate_str)
 
 
-def build_vedbus_service(service_name: str, allow_mock_fallback: bool = True):
+def build_vedbus_service(service_name: str):
     _prime_vedbus_import_path()
     try:
         from vedbus import VeDbusService
 
         return VeDbusService(service_name, register=False)
     except Exception as exc:
-        if not allow_mock_fallback:
-            raise RuntimeError(
-                "VeDbusService is not available. Provide velib_python on the Cerbo or use --mock-dbus for local testing."
-            ) from exc
-        return MockVeDbusService(service_name)
+        raise RuntimeError("VeDbusService is not available. Provide velib_python under ext/velib_python.") from exc
 
 
 @dataclass
@@ -113,10 +104,9 @@ class GeneratorDbusAdapter:
         config: DriverConfig | None = None,
         service=None,
         on_startstop: Callable[[bool], bool] | None = None,
-        allow_mock_fallback: bool = True,
     ) -> None:
         self.config = config or DriverConfig()
-        self.service = service or build_vedbus_service(self.config.service_name, allow_mock_fallback=allow_mock_fallback)
+        self.service = service or build_vedbus_service(self.config.service_name)
         self._on_startstop = on_startstop
         self._on_mode_change: Callable[[int], bool] | None = None
         self._on_target_temperature_change: Callable[[int], bool] | None = None
