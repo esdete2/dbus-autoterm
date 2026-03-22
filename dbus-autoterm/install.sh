@@ -50,6 +50,7 @@ fi
 remount_root rw
 rm -f "$SERVICE_LINK"
 ln -s "$SCRIPT_DIR/service" "$SERVICE_LINK"
+# Re-run install on boot so the service link is recreated after Venus OS maintenance or image changes.
 grep -qxF "$INSTALL_LINE" "$RC_LOCAL" || echo "$INSTALL_LINE" >> "$RC_LOCAL"
 remount_root ro
 

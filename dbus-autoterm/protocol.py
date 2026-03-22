@@ -6,7 +6,7 @@ PREAMBLE = 0xAA
 
 
 class ProtocolError(ValueError):
-    """Raised when a frame cannot be parsed or validated."""
+    pass
 
 
 @dataclass(frozen=True)
@@ -81,8 +81,6 @@ def decode_frame(packet: bytes, checksum_byteorder: str = "big") -> Frame:
 
 
 class FrameParser:
-    """Incremental parser for serial byte streams."""
-
     def __init__(self, checksum_byteorder: str = "big") -> None:
         self._buffer = bytearray()
         self._checksum_byteorder = checksum_byteorder

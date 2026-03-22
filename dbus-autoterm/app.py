@@ -204,6 +204,8 @@ def main(argv: list[str] | None = None) -> int:
     service = MockVeDbusService(runtime.driver_config.service_name) if runtime.mock_dbus else None
     dbus_adapter = GeneratorDbusAdapter(config=runtime.driver_config, service=service)
     app = HeaterDriverApp(provider, dbus_adapter)
+
+    # Wire writable D-Bus paths to provider-backed state transitions.
     dbus_adapter._on_startstop = app.startstop
     dbus_adapter._on_mode_change = app.update_mode
     dbus_adapter._on_target_temperature_change = app.update_target_temperature

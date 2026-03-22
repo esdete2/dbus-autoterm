@@ -69,6 +69,7 @@ class MockVeDbusService:
 
 
 def _prime_vedbus_import_path() -> None:
+    # dbus-autoterm carries velib_python locally so vedbus is available without system-wide packaging.
     app_root = Path(__file__).resolve().parent
     candidate = app_root / "ext" / "velib_python"
     if candidate.exists():
@@ -99,6 +100,7 @@ class DriverConfig:
 
 
 class GeneratorDbusAdapter:
+    # Maps HeaterSnapshot state into a Venus generator-style D-Bus service shape.
     def __init__(
         self,
         config: DriverConfig | None = None,

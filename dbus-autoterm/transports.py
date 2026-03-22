@@ -77,7 +77,7 @@ def open_pty_endpoint() -> PtyEndpoint:
 
 
 class MemoryByteStream(ByteStream):
-    """Small test-only full duplex endpoint."""
+    # Small test-only full duplex endpoint.
 
     def __init__(self) -> None:
         self._buffer = bytearray()
@@ -110,4 +110,3 @@ def memory_stream_pair() -> tuple[MemoryByteStream, MemoryByteStream]:
     a.connect(b)
     b.connect(a)
     return a, b
-

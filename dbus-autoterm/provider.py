@@ -60,6 +60,7 @@ class SerialProviderConfig:
 
 
 class DummyHeaterProvider:
+    # Dummy provider used for Cerbo-side UI and service validation before real heater transport is enabled.
     def __init__(self) -> None:
         self._snapshot = HeaterSnapshot()
         self._health = TransportHealth(connected=False, profile_name="dummy")
@@ -174,6 +175,7 @@ class DummyHeaterProvider:
 
 
 class SerialHeaterProvider:
+    # Serial provider for the real controller-replacement protocol over UART.
     def __init__(self, config: SerialProviderConfig, stream: ByteStream | None = None) -> None:
         self._config = config
         self._stream = stream
