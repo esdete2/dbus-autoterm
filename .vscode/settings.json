@@ -1,0 +1,7 @@
+{
+  "python.analysis.extraPaths": [
+    "./dbus-autoterm",
+    "./dbus-autoterm/ext/velib_python",
+    "./emulation"
+  ]
+}
