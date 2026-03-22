@@ -3,7 +3,6 @@
   "packages": ["python@latest"],
   "shell": {
     "init_hook": [
-      "echo 'Welcome to devbox!' > /dev/null",
       "export DEVBOX_PYTHON_VENV=\"$DEVBOX_PROJECT_ROOT/.devbox/venv\"",
       "if [ ! -x \"$DEVBOX_PYTHON_VENV/bin/python\" ]; then python -m venv \"$DEVBOX_PYTHON_VENV\"; fi",
       "if [ ! -x \"$DEVBOX_PYTHON_VENV/bin/pip\" ]; then \"$DEVBOX_PYTHON_VENV/bin/python\" -m ensurepip --upgrade >/dev/null 2>&1 || true; fi",
@@ -11,37 +10,24 @@
       "export PATH=\"$DEVBOX_PYTHON_VENV/bin:$PATH\""
     ],
     "scripts": {
-      "install:emulation": [
-        "pip install -e './emulation[serial]'"
-      ],
-      "install:dbus-autoterm": [
-        "pip install -e './dbus-autoterm[serial]'"
-      ],
-      "install:all": [
-        "devbox run install:emulation",
-        "devbox run install:dbus-autoterm"
-      ],
-      "test": [
-        "devbox run test:all"
-      ],
-      "test:all": [
-        "devbox run test:emulation",
-        "devbox run test:dbus-autoterm"
-      ],
       "test:emulation": [
         "PYTHONPATH=emulation python3 -m unittest discover -s emulation/tests -v"
       ],
       "test:dbus-autoterm": [
         "PYTHONPATH=dbus-autoterm:emulation python3 -m unittest discover -s dbus-autoterm/tests -v"
       ],
-      "run:emulation": [
+      "test": [
+        "devbox run test:emulation",
+        "devbox run test:dbus-autoterm"
+      ],
+      "run:emulation:pty": [
         "PYTHONPATH=emulation python3 -m emulator --transport pty"
+      ],
+      "run:emulation:gpio": [
+        "PYTHONPATH=emulation python3 -m emulator --transport serial --device /dev/serial0"
       ],
       "run:dbus-autoterm:dummy": [
         "PYTHONPATH=dbus-autoterm python3 -m app --backend=dummy --mock-dbus"
-      ],
-      "run:dbus-autoterm:serial": [
-        "PYTHONPATH=dbus-autoterm python3 -m app --backend=serial"
       ],
       "check:emulation": [
         "PYTHONPATH=emulation python3 -m compileall emulation"
@@ -49,7 +35,7 @@
       "check:dbus-autoterm": [
         "PYTHONPATH=dbus-autoterm python3 -m compileall dbus-autoterm"
       ],
-      "check:all": [
+      "check": [
         "devbox run check:emulation",
         "devbox run check:dbus-autoterm"
       ]

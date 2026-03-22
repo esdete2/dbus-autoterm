@@ -21,7 +21,9 @@
 - `devbox run test` or `devbox run test:all`: run both project test suites
 - `devbox run test:emulation`: run the emulation tests
 - `devbox run test:dbus-autoterm`: run the driver tests, including the driver-to-emulation compatibility test
-- `devbox run run:emulation`: start the heater emulation CLI
+- `devbox run run:emulation`: start the heater emulation CLI on a PTY for local development
+- `devbox run run:emulation:pty`: start the heater emulation CLI on a PTY for local development
+- `devbox run run:emulation:gpio`: start the heater emulation CLI on Raspberry Pi GPIO UART via `/dev/serial0`
 - `devbox run run:dbus-autoterm:dummy`: start the driver app with the dummy backend and mock D-Bus
 - `devbox run run:dbus-autoterm:serial -- --serial-device <device>`: start the driver app against a real serial device
 - `devbox run check:all`: byte-compile both projects

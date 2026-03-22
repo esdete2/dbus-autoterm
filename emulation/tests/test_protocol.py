@@ -7,7 +7,7 @@ from controller import (
     parse_status_payload,
 )
 from domain import HeaterSettings, OperatingMode
-from protocol import Frame, decode_frame, encode_frame
+from protocol import Frame, FrameParser, decode_frame, encode_frame
 
 
 class ProtocolTests(unittest.TestCase):
@@ -53,6 +53,14 @@ class ProtocolTests(unittest.TestCase):
         )
         packet = encode_frame(build_start_frame(0x03, settings))
         self.assertEqual(packet.hex().upper(), "AA030600010100040F0002725F")
+
+    def test_frame_parser_recovers_from_corrupt_packet(self):
+        parser = FrameParser()
+        corrupt = bytes.fromhex("AA0300000F587D")
+        valid = bytes.fromhex("AA0300000F587C")
+        frames = parser.feed(corrupt + valid)
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(frames[0].message_id2, MSG_STATUS)
 
 
 if __name__ == "__main__":

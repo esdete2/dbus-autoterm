@@ -13,4 +13,4 @@ dependencies = []
 serial = ["pyserial>=3.5"]
 
 [tool.setuptools]
-py-modules = ["controller", "domain", "emulator", "protocol", "transports"]
+py-modules = ["controller", "domain", "emulator", "heater", "protocol", "runtime", "transports"]

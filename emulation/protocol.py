@@ -104,5 +104,11 @@ class FrameParser:
             if len(self._buffer) < frame_length:
                 return frames
             packet = bytes(self._buffer[:frame_length])
+            try:
+                frame = decode_frame(packet, checksum_byteorder=self._checksum_byteorder)
+            except ProtocolError:
+                # Drop one byte and rescan so line noise does not poison the entire parser state.
+                del self._buffer[0]
+                continue
             del self._buffer[:frame_length]
-            frames.append(decode_frame(packet, checksum_byteorder=self._checksum_byteorder))
+            frames.append(frame)
