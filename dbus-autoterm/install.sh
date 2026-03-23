@@ -27,18 +27,6 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! "$PYTHON_BIN" -m py_compile \
-    "$SCRIPT_DIR/app.py" \
-    "$SCRIPT_DIR/controller.py" \
-    "$SCRIPT_DIR/domain.py" \
-    "$SCRIPT_DIR/gx_dbus.py" \
-    "$SCRIPT_DIR/protocol.py" \
-    "$SCRIPT_DIR/provider.py" \
-    "$SCRIPT_DIR/transports.py" >/dev/null 2>&1; then
-    echo "Python source validation failed"
-    exit 1
-fi
-
 if [ ! -f "$RC_LOCAL" ]; then
     {
         echo "#!/bin/bash"

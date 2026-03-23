@@ -15,7 +15,7 @@
 - Install path: `/data/apps/dbus-autoterm`
 - Config path: `/data/apps/dbus-autoterm/config.ini`
 - Service path: `/service/dbus-autoterm`
-- D-Bus service: `com.victronenergy.generator.autoterm_air2d`
+- D-Bus service: `com.victronenergy.genset.autoterm_air2d`
 - Service entrypoint: `python3 app.py -c /data/apps/dbus-autoterm/config.ini`
 
 ## Offline installation on a Cerbo GX

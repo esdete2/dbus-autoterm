@@ -90,9 +90,9 @@ def build_vedbus_service(service_name: str):
 
 @dataclass
 class DriverConfig:
-    service_name: str = "com.victronenergy.generator.autoterm_air2d"
+    service_name: str = "com.victronenergy.genset.autoterm_air2d"
     device_instance: int = 287
-    product_id: int = 0
+    product_id: int = 0xC06B
     product_name: str = "Autoterm Integration for Victron GX"
     firmware_version: str = "0.1.0"
     hardware_version: str = "AIR2D"
@@ -100,7 +100,7 @@ class DriverConfig:
 
 
 class GeneratorDbusAdapter:
-    # Maps HeaterSnapshot state into a Venus generator-style D-Bus service shape.
+    # Maps HeaterSnapshot state into a temporary Venus genset service shape.
     def __init__(
         self,
         config: DriverConfig | None = None,
@@ -113,6 +113,7 @@ class GeneratorDbusAdapter:
         self._on_mode_change: Callable[[int], bool] | None = None
         self._on_target_temperature_change: Callable[[int], bool] | None = None
         self._on_power_level_change: Callable[[int], bool] | None = None
+        self._auto_start_enabled = 0
         self._init_service()
 
     def _init_service(self) -> None:
@@ -128,15 +129,26 @@ class GeneratorDbusAdapter:
             connected=1,
         )
         self.service.add_path("/CustomName", self.config.product_name)
+        self.service.add_path("/Role", "genset")
+        self.service.add_path("/NrOfPhases", 1)
+        self.service.add_path("/RemoteStartModeEnabled", 1)
+        self.service.add_path("/Start", 0)
+        self.service.add_path("/AutoStart", 0)
         self.service.add_path("/State", int(HeaterPhase.OFF))
-        self.service.add_path("/StatusCode", 1)
+        self.service.add_path("/StatusCode", 0)
         self.service.add_path("/StatusCodeMajor", 0)
         self.service.add_path("/StatusCodeMinor", 1)
         self.service.add_path("/StatusText", "off")
         self.service.add_path("/StartStop", 0, writeable=True, onchangecallback=self._handle_startstop)
         self.service.add_path("/ErrorCode", 0)
+        self.service.add_path("/Error/0/Id", "")
         self.service.add_path("/Runtime", 0)
         self.service.add_path("/Alarms/Communication", 0)
+        self.service.add_path("/Ac/Frequency", 0.0)
+        self.service.add_path("/Ac/Power", 0)
+        self.service.add_path("/Ac/L1/Voltage", 0.0)
+        self.service.add_path("/Ac/L1/Current", 0.0)
+        self.service.add_path("/Ac/L1/Power", 0)
         self.service.add_path("/Dc/0/Voltage", 0.0)
         self.service.add_path("/Temperatures/Heater", None)
         self.service.add_path("/Temperatures/External", None)
@@ -179,19 +191,73 @@ class GeneratorDbusAdapter:
             return False
         return self._on_power_level_change(int(value))
 
+    def _genset_status_code(self, snapshot: HeaterSnapshot, is_connected: bool) -> int:
+        if not is_connected or snapshot.telemetry.error_code:
+            return 10
+        if snapshot.phase == HeaterPhase.OFF:
+            return 0
+        if snapshot.phase == HeaterPhase.STARTING:
+            return 1
+        if snapshot.phase == HeaterPhase.WARMING_UP:
+            return 4
+        if snapshot.phase == HeaterPhase.RUNNING:
+            return 8
+        return 9
+
+    def _generator_state(self, snapshot: HeaterSnapshot, is_connected: bool) -> int:
+        if not is_connected or snapshot.telemetry.error_code:
+            return 10
+        if snapshot.phase == HeaterPhase.OFF:
+            return 0
+        if snapshot.phase in {HeaterPhase.STARTING, HeaterPhase.WARMING_UP}:
+            return 2
+        if snapshot.phase == HeaterPhase.RUNNING:
+            return 1
+        return 4
+
+    def _running_by_condition(self, snapshot: HeaterSnapshot) -> int:
+        if snapshot.phase == HeaterPhase.OFF:
+            return 0
+        return 1 if snapshot.phase in {HeaterPhase.STARTING, HeaterPhase.WARMING_UP, HeaterPhase.RUNNING} else 0
+
+    def _ac_metrics(self, snapshot: HeaterSnapshot) -> tuple[float, float, int]:
+        if snapshot.phase not in {HeaterPhase.STARTING, HeaterPhase.WARMING_UP, HeaterPhase.RUNNING, HeaterPhase.SHUTTING_DOWN}:
+            return 0.0, 0.0, 0
+        if snapshot.phase == HeaterPhase.RUNNING:
+            voltage = 230.0
+            power = 900 + (snapshot.settings.power_level * 350)
+        elif snapshot.phase == HeaterPhase.SHUTTING_DOWN:
+            voltage = 230.0
+            power = 250
+        else:
+            voltage = 230.0
+            power = 500
+        current = round(power / voltage, 2)
+        return voltage, current, power
+
     def publish_snapshot(self, snapshot: HeaterSnapshot, connected: bool) -> None:
         is_connected = bool(connected and snapshot.connected)
-        status_code = (snapshot.telemetry.status_code_major * 100) + snapshot.telemetry.status_code_minor
+        genset_status_code = self._genset_status_code(snapshot, is_connected)
+        ac_voltage, ac_current, ac_power = self._ac_metrics(snapshot)
+
         self.service["/Connected"] = 1 if is_connected else 0
         self.service["/State"] = int(snapshot.phase)
-        self.service["/StatusCode"] = status_code
+        self.service["/StatusCode"] = genset_status_code
         self.service["/StatusCodeMajor"] = snapshot.telemetry.status_code_major
         self.service["/StatusCodeMinor"] = snapshot.telemetry.status_code_minor
         self.service["/StatusText"] = STATUS_TEXT.get(snapshot.phase, "unknown")
         self.service["/StartStop"] = 1 if snapshot.phase in {HeaterPhase.STARTING, HeaterPhase.WARMING_UP, HeaterPhase.RUNNING} else 0
+        self.service["/Start"] = self.service["/StartStop"]
+        self.service["/AutoStart"] = self._auto_start_enabled
         self.service["/ErrorCode"] = snapshot.telemetry.error_code
+        self.service["/Error/0/Id"] = "" if snapshot.telemetry.error_code == 0 else str(snapshot.telemetry.error_code)
         self.service["/Runtime"] = snapshot.runtime_seconds
         self.service["/Alarms/Communication"] = 0 if is_connected else 2
+        self.service["/Ac/Frequency"] = 50.0 if ac_power else 0.0
+        self.service["/Ac/Power"] = ac_power
+        self.service["/Ac/L1/Voltage"] = ac_voltage
+        self.service["/Ac/L1/Current"] = ac_current
+        self.service["/Ac/L1/Power"] = ac_power
         self.service["/Dc/0/Voltage"] = snapshot.telemetry.battery_voltage_v
         self.service["/Temperatures/Heater"] = snapshot.telemetry.heater_temperature_c
         self.service["/Temperatures/External"] = snapshot.telemetry.external_temperature_c

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import pty
 import select
 from dataclasses import dataclass
 
@@ -70,6 +69,8 @@ class PtyEndpoint:
 
 
 def open_pty_endpoint() -> PtyEndpoint:
+    import pty
+
     master_fd, slave_fd = pty.openpty()
     slave_path = os.ttyname(slave_fd)
     os.close(slave_fd)
