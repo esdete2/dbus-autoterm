@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Protocol
 
 from controller import (
     MSG_SETTINGS,
+    MSG_INIT,
     build_get_settings_frame,
     build_init_frame,
     build_panel_temperature_frame,
@@ -19,8 +21,10 @@ from controller import (
     parse_status_payload,
 )
 from domain import HeaterPhase, HeaterSettings, HeaterSnapshot, TransportHealth
-from protocol import CONTROLLER_PROFILE, Frame, FrameParser, ProtocolProfile, encode_frame
+from protocol import CONTROLLER_PROFILE, Frame, FrameParser, ProtocolError, ProtocolProfile, encode_frame
 from transports import ByteStream, SerialByteStream
+
+LOG = logging.getLogger(__name__)
 
 
 class HeaterProvider(Protocol):
@@ -57,6 +61,7 @@ class SerialProviderConfig:
     device: str
     profile: ProtocolProfile = CONTROLLER_PROFILE
     timeout_s: float = 1.0
+    settings_refresh_interval_s: float = 10.0
 
 
 class DummyHeaterProvider:
@@ -182,20 +187,26 @@ class SerialHeaterProvider:
         self._parser = FrameParser(checksum_byteorder=config.profile.checksum_byteorder)
         self._snapshot = HeaterSnapshot(connected=False)
         self._health = TransportHealth(connected=False, profile_name=config.profile.name)
+        self._next_settings_refresh_monotonic = 0.0
 
     def connect(self) -> None:
         if self._stream is None:
             self._stream = SerialByteStream(self._config.device, self._config.profile.baudrate)
-        self._health.connected = True
-        self._snapshot.connected = True
+        self._establish_session()
+        self.refresh()
+
+    def _establish_session(self) -> None:
+        assert self._stream is not None
         self._exchange(build_init_frame(self._config.profile.controller_device))
         self._exchange(build_serial_request_frame(self._config.profile.controller_device))
         self._exchange(build_version_request_frame(self._config.profile.controller_device))
-        self.refresh()
+        self._health.connected = True
+        self._snapshot.connected = True
 
     def close(self) -> None:
         if self._stream is not None:
             self._stream.close()
+            self._stream = None
         self._health.connected = False
         self._snapshot.connected = False
 
@@ -216,21 +227,71 @@ class SerialHeaterProvider:
             if not data:
                 continue
             for response in self._parser.feed(data):
-                if response.message_id2 == frame.message_id2:
+                if self._matches_response(frame, response):
                     return response
         self._health.last_error = f"timeout waiting for response to 0x{frame.message_id2:02x}"
         raise TimeoutError(self._health.last_error)
 
-    def refresh(self) -> HeaterSnapshot:
-        settings_frame = self._exchange(build_get_settings_frame(self._config.profile.controller_device))
-        if settings_frame and settings_frame.message_id2 == MSG_SETTINGS:
-            self._snapshot.settings = parse_settings_payload(settings_frame.payload)
-        status_frame = self._exchange(build_status_request_frame(self._config.profile.controller_device))
-        if status_frame:
-            status = parse_status_payload(status_frame.payload)
-            from controller import apply_status
+    def _matches_response(self, request: Frame, response: Frame) -> bool:
+        if response.message_id2 != request.message_id2:
+            return False
 
-            self._snapshot = apply_status(self._snapshot, status)
+        expected_device = (
+            self._config.profile.init_device
+            if request.message_id2 in {MSG_INIT}
+            else self._config.profile.heater_device
+        )
+        if response.device != expected_device:
+            LOG.debug(
+                "ignoring frame with unexpected device for msg 0x%02x: device=0x%02x expected=0x%02x payload=%s",
+                request.message_id2,
+                response.device,
+                expected_device,
+                response.payload.hex(),
+            )
+            return False
+
+        if request.message_id2 == MSG_SETTINGS and len(response.payload) < 6:
+            LOG.debug("ignoring short settings response payload=%s", response.payload.hex())
+            return False
+
+        return True
+
+    def refresh(self) -> HeaterSnapshot:
+        if self._stream is None:
+            self._stream = SerialByteStream(self._config.device, self._config.profile.baudrate)
+        if not self._health.connected:
+            try:
+                self._establish_session()
+            except (TimeoutError, ProtocolError) as exc:
+                LOG.warning("serial session establish failed; remaining disconnected: %s", exc)
+                self._health.connected = False
+                self._snapshot.connected = False
+                return self._snapshot
+
+        now = time.monotonic()
+        if now >= self._next_settings_refresh_monotonic:
+            try:
+                settings_frame = self._exchange(build_get_settings_frame(self._config.profile.controller_device))
+                if settings_frame and settings_frame.message_id2 == MSG_SETTINGS:
+                    self._snapshot.settings = parse_settings_payload(settings_frame.payload)
+            except (TimeoutError, ProtocolError) as exc:
+                LOG.warning("settings refresh failed; keeping previous settings: %s", exc)
+            finally:
+                self._next_settings_refresh_monotonic = now + max(1.0, self._config.settings_refresh_interval_s)
+        try:
+            status_frame = self._exchange(build_status_request_frame(self._config.profile.controller_device))
+            if status_frame:
+                status = parse_status_payload(status_frame.payload)
+                from controller import apply_status
+
+                self._snapshot = apply_status(self._snapshot, status)
+                self._health.connected = True
+                self._snapshot.connected = True
+        except (TimeoutError, ProtocolError) as exc:
+            LOG.warning("status refresh failed; keeping previous snapshot: %s", exc)
+            self._health.connected = False
+            self._snapshot.connected = False
         return self._snapshot
 
     def start(self, settings: HeaterSettings) -> HeaterSnapshot:

@@ -147,7 +147,9 @@ class FakeAir2DHeater:
         expected = self._expected_startup_message()
         if expected is None:
             return True
-        return message_id2 == expected
+        if message_id2 == expected:
+            return True
+        return message_id2 in STARTUP_SEQUENCE[:self._startup_index]
 
     def _mark_startup_message(self, message_id2: int) -> None:
         if self.config.startup_sequence_required and self._expected_startup_message() == message_id2:

@@ -101,6 +101,16 @@ class EmulatorTests(unittest.TestCase):
         self.assertEqual(heater.handle_frame(build_serial_request_frame(0x03))[0].message_id2, 0x04)
         self.assertEqual(heater.handle_frame(build_version_request_frame(0x03))[0].message_id2, 0x06)
 
+    def test_duplicate_startup_message_is_answered_without_advancing_twice(self):
+        heater = FakeAir2DHeater()
+        first = heater.handle_frame(build_init_frame(0x03))
+        second = heater.handle_frame(build_init_frame(0x03))
+
+        self.assertEqual(first[0].message_id2, 0x1C)
+        self.assertEqual(second[0].message_id2, 0x1C)
+        self.assertEqual(heater._expected_startup_message(), 0x04)
+        self.assertEqual(heater.handle_frame(build_version_request_frame(0x03)), [])
+
     def test_malformed_start_payload_is_ignored(self):
         heater = FakeAir2DHeater()
         heater.handle_frame(build_init_frame(0x03))

@@ -200,7 +200,10 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("--serial-device is required for --backend=serial")
         provider = SerialHeaterProvider(SerialProviderConfig(device=runtime.serial_device))
 
-    provider.connect()
+    try:
+        provider.connect()
+    except Exception:
+        LOG.exception("initial provider connect failed; continuing in disconnected mode")
     service = MockVeDbusService(runtime.driver_config.service_name) if runtime.mock_dbus else None
     dbus_adapter = GeneratorDbusAdapter(config=runtime.driver_config, service=service)
     app = HeaterDriverApp(provider, dbus_adapter)
@@ -212,7 +215,10 @@ def main(argv: list[str] | None = None) -> int:
     dbus_adapter._on_power_level_change = app.update_power_level
 
     try:
-        app.run_once()
+        try:
+            app.run_once()
+        except Exception:
+            LOG.exception("initial refresh failed; continuing into poll loop")
         _run_with_glib(app, runtime.poll_interval)
     except KeyboardInterrupt:
         LOG.info("shutdown requested")

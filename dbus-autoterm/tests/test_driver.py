@@ -3,7 +3,8 @@ import unittest
 from app import HeaterDriverApp
 from domain import OperatingMode
 from gx_dbus import DriverConfig, GeneratorDbusAdapter, MockVeDbusService
-from provider import DummyHeaterProvider
+from protocol import CONTROLLER_PROFILE, Frame
+from provider import DummyHeaterProvider, SerialHeaterProvider, SerialProviderConfig
 
 
 class DriverTests(unittest.TestCase):
@@ -74,6 +75,15 @@ class DriverTests(unittest.TestCase):
         self.assertGreater(service["/Ac/Power"], 0)
         self.assertGreater(service["/Ac/L1/Voltage"], 0.0)
         self.assertGreater(service["/Ac/L1/Current"], 0.0)
+
+    def test_serial_provider_ignores_echoed_settings_request_frame(self):
+        provider = SerialHeaterProvider(SerialProviderConfig(device="/dev/null", profile=CONTROLLER_PROFILE), stream=object())
+        request = Frame(device=CONTROLLER_PROFILE.controller_device, message_id2=0x02)
+        echoed_request = Frame(device=CONTROLLER_PROFILE.controller_device, message_id2=0x02)
+        heater_response = Frame(device=CONTROLLER_PROFILE.heater_device, message_id2=0x02, payload=b"\x01\x00\x04\x0f\x00\x02")
+
+        self.assertFalse(provider._matches_response(request, echoed_request))
+        self.assertTrue(provider._matches_response(request, heater_response))
 
 
 if __name__ == "__main__":
