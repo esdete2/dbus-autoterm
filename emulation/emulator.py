@@ -14,7 +14,7 @@ LOG = logging.getLogger(__name__)
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="dbus-autoterm emulation")
     parser.add_argument("--transport", choices=["serial", "pty"], default="serial")
-    parser.add_argument("--device", help="serial device when --transport=serial, default: /dev/serial0")
+    parser.add_argument("--device", help="serial device when --transport=serial, default: /dev/ttyAMA0")
     parser.add_argument("--baudrate", type=int, default=None)
     parser.add_argument(
         "--initial-phase",

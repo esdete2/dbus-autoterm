@@ -24,7 +24,7 @@
         "PYTHONPATH=emulation python3 -m emulator --transport pty"
       ],
       "emulation:run:gpio": [
-        "PYTHONPATH=emulation python3 -m emulator --transport serial --device /dev/serial0"
+        "PYTHONPATH=emulation python3 -m emulator --transport serial --device /dev/ttyAMA0"
       ],
       "emulation:check": [
         "PYTHONPATH=emulation python3 -m compileall emulation"

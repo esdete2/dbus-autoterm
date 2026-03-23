@@ -31,7 +31,7 @@ def run_loop(heater: FakeAir2DHeater, stream: ByteStream, profile: ProtocolProfi
 
 def build_transport(args: argparse.Namespace, profile: ProtocolProfile) -> ByteStream:
     if args.transport == "serial":
-        device = args.device or "/dev/serial0"
+        device = args.device or "/dev/ttyAMA0"
         LOG.info(
             "event=startup transport=serial device=%s baudrate=%s profile=%s",
             device,
