@@ -11,6 +11,7 @@ For real serial testing on a Cerbo GX, the important operational detail is that 
 - Runtime is direct Python execution via `python3 app.py`; Cerbo installation does not depend on `pip install -e`, PyPI, or internet access.
 - `velib_python` is bundled under `ext/velib_python`.
 - Primary UX comes from a dedicated `com.victronenergy.heater.autoterm_air2d` service plus installed custom GUI-v2 heater pages.
+- The current custom heater UI uses plain English labels only. The lightweight QML overlay install path does not yet ship a custom GUI-v2 translation catalog for Autoterm-specific strings.
 - The future `serial` backend remains in the tree for later hardware integration, but it is not part of the default install path.
 - Serial unplug/replug recovery is implemented in the provider so the service can recover when the tty disappears and later returns.
 
@@ -24,7 +25,16 @@ For real serial testing on a Cerbo GX, the important operational detail is that 
 
 The runtime uses one primary service:
 
-- `com.victronenergy.heater.autoterm_air2d` is the source of truth for the custom heater page, live heater telemetry, timer placeholders, and heater-specific writable controls.
+- `com.victronenergy.heater.autoterm_air2d` is the source of truth for the custom heater UI, live heater telemetry, and heater-specific writable controls.
+
+Current custom UI scope:
+
+- dedicated heater device row in the GX device list
+- root heater control page
+- live data page
+- diagnostics page
+- heater settings page
+- timer pages remain in the tree for later work, but are currently hidden from the live MVP navigation
 
 ## Cerbo serial setup
 
@@ -99,6 +109,12 @@ What `install.sh` does:
 - installs the custom GUI-v2 heater delegate and page stack under `/opt/victronenergy/gui-v2/Victron/VenusOS`
 - adds a reinstall hook to `/data/rc.local`
 - restarts the runit service if `svc` is available
+
+The GUI install path is a QML overlay only:
+
+- it copies custom heater QML into the system `gui-v2` tree
+- it does not currently register a custom translation catalog for new Autoterm-specific translation ids
+- for that reason, the shipped heater UI intentionally uses plain English labels instead of custom `qsTrId(...)` keys
 
 If the Autoterm adapter is already plugged in when the rule is first installed or updated, unplug/replug the adapter or reboot the Cerbo once so the current tty instance picks up the new udev rule.
 
@@ -232,11 +248,19 @@ The plugin is complete around the dummy runtime path:
 - GLib-based Venus-style polling
 - dedicated heater D-Bus service publication
 - custom GUI-v2 heater pages installed from the driver repo
+- working heater MVP UI flow on the custom pages:
+  - heater device row
+  - root control page
+  - live data page
+  - diagnostics page
+  - heater settings page
 - runit service scripts
 - offline Cerbo installation flow
 
 What is still deferred:
 
 - long-term productization beyond the current FT232R-based Cerbo test harness
-- confirmed GX Touch UI validation against the final heater page set on target hardware
+- further GX Touch UI polish and validation on target hardware
+- proper custom GUI-v2 translation catalog support for Autoterm-specific labels
+- timer UX/backend activation in the live heater UI
 - production heater integration with the AIR 2D protocol backend
