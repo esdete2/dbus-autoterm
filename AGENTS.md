@@ -37,5 +37,5 @@
 - `dbus-autoterm/restart.sh`: restart the runit service
 - `dbus-autoterm/uninstall.sh`: remove the service symlink and the `/data/rc.local` reinstall hook
 - `dbus-autoterm/config.sample.ini`: template runtime config for the driver service
-- `dbus-autoterm/README.md`: project description plus offline Cerbo install, config, and service instructions
+- `README.md`: project description plus offline Cerbo install, config, service instructions, and current UI/runtime status
 - `dbus-autoterm/ext/velib_python`: bundled `velib_python` copy used by the driver for `vedbus`
