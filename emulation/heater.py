@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import time
 from dataclasses import dataclass
 
@@ -55,6 +56,7 @@ class EmulatorConfig:
     warmup_to_run_s: float = 12.0
     shutdown_to_off_s: float = 10.0
     duplicate_command_window_s: float = 0.75
+    random_seed: int | None = None
 
 
 class FakeAir2DHeater:
@@ -87,6 +89,7 @@ class FakeAir2DHeater:
         self._fan_rpm_actual_model = float(self.snapshot.telemetry.fan_rpm_actual)
         self._fuel_pump_frequency_model = float(self.snapshot.telemetry.fuel_pump_frequency_hz)
         self._battery_voltage_model = float(self.snapshot.telemetry.battery_voltage_v)
+        self._rng = random.Random(self.config.random_seed)
         self._apply_status_code_defaults()
 
     def _log_event(self, event: str, **fields: object) -> None:
@@ -286,16 +289,133 @@ class FakeAir2DHeater:
             blower_rate = 16.0
             pump_rate = 0.35
 
+        if self._ventilation_mode:
+            internal_jitter = 0.15
+            heater_jitter = 0.35
+            fan_jitter = 0.8
+            pump_jitter = 0.0
+            voltage_jitter = 0.02
+            internal_band = 0.8
+            heater_band = 1.5
+            fan_band = 2.5
+            pump_band = 0.02
+            voltage_band = 0.08
+        elif self.snapshot.phase == HeaterPhase.OFF:
+            internal_jitter = 0.04
+            heater_jitter = 0.08
+            fan_jitter = 0.0
+            pump_jitter = 0.0
+            voltage_jitter = 0.01
+            internal_band = 0.4
+            heater_band = 0.7
+            fan_band = 0.2
+            pump_band = 0.01
+            voltage_band = 0.03
+        elif self.snapshot.phase == HeaterPhase.STARTING:
+            internal_jitter = 0.28
+            heater_jitter = 0.75
+            fan_jitter = 1.4
+            pump_jitter = 0.03
+            voltage_jitter = 0.03
+            internal_band = 1.5
+            heater_band = 3.0
+            fan_band = 4.0
+            pump_band = 0.10
+            voltage_band = 0.12
+        elif self.snapshot.phase == HeaterPhase.WARMING_UP:
+            internal_jitter = 0.34
+            heater_jitter = 1.0
+            fan_jitter = 1.8
+            pump_jitter = 0.04
+            voltage_jitter = 0.04
+            internal_band = 1.8
+            heater_band = 4.0
+            fan_band = 4.5
+            pump_band = 0.12
+            voltage_band = 0.15
+        elif self.snapshot.phase == HeaterPhase.RUNNING:
+            internal_jitter = 0.18
+            heater_jitter = 0.65
+            fan_jitter = 1.0
+            pump_jitter = 0.02
+            voltage_jitter = 0.03
+            internal_band = 1.2
+            heater_band = 2.5
+            fan_band = 3.0
+            pump_band = 0.08
+            voltage_band = 0.10
+        else:
+            internal_jitter = 0.12
+            heater_jitter = 0.45
+            fan_jitter = 0.8
+            pump_jitter = 0.01
+            voltage_jitter = 0.02
+            internal_band = 0.8
+            heater_band = 1.8
+            fan_band = 2.0
+            pump_band = 0.03
+            voltage_band = 0.08
+
         def approach(current: float, target: float, rate_per_second: float) -> float:
             if current < target:
                 return min(target, current + (rate_per_second * delta))
             return max(target, current - (rate_per_second * delta))
 
-        self._internal_temperature_model = approach(self._internal_temperature_model, target_internal, heat_rate)
-        self._heater_temperature_model = approach(self._heater_temperature_model, target_heater, heat_rate * 1.6)
-        self._fan_rpm_set_model = approach(self._fan_rpm_set_model, target_fan_set, blower_rate)
-        self._fan_rpm_actual_model = approach(self._fan_rpm_actual_model, target_fan_actual, blower_rate)
-        self._fuel_pump_frequency_model = approach(self._fuel_pump_frequency_model, target_pump, pump_rate)
+        def clamp(value: float, low: float, high: float) -> float:
+            return min(high, max(low, value))
+
+        variation_scale = min(1.0, max(0.25, delta))
+
+        def apply_variation(model: float, target: float, rate: float, jitter: float, band: float, low: float, high: float) -> float:
+            varied = approach(model, target, rate)
+            varied += self._rng.uniform(-jitter, jitter) * variation_scale
+            return clamp(varied, max(low, target - band), min(high, target + band))
+
+        self._internal_temperature_model = apply_variation(
+            self._internal_temperature_model,
+            target_internal,
+            heat_rate,
+            internal_jitter,
+            internal_band,
+            ambient_temperature - 2.0,
+            max(58.0, requested_cabin_temperature + 2.0),
+        )
+        self._heater_temperature_model = apply_variation(
+            self._heater_temperature_model,
+            target_heater,
+            heat_rate * 1.6,
+            heater_jitter,
+            heater_band,
+            20.0,
+            90.0,
+        )
+        self._fan_rpm_set_model = apply_variation(
+            self._fan_rpm_set_model,
+            target_fan_set,
+            blower_rate,
+            fan_jitter,
+            fan_band,
+            0.0,
+            100.0,
+        )
+        self._fan_rpm_actual_model = apply_variation(
+            self._fan_rpm_actual_model,
+            target_fan_actual,
+            blower_rate,
+            fan_jitter,
+            fan_band,
+            0.0,
+            max(0.0, self._fan_rpm_set_model),
+        )
+        self._fuel_pump_frequency_model = apply_variation(
+            self._fuel_pump_frequency_model,
+            target_pump,
+            pump_rate,
+            pump_jitter,
+            pump_band,
+            0.0,
+            1.5,
+        )
 
         self.snapshot.telemetry.internal_temperature_c = int(round(self._internal_temperature_model))
         self.snapshot.telemetry.heater_temperature_c = int(round(self._heater_temperature_model))
@@ -306,7 +426,15 @@ class FakeAir2DHeater:
         target_voltage = self.config.initial_battery_voltage_v - min(1.2, active_load * 0.08)
         if self.snapshot.phase == HeaterPhase.OFF and not self._ventilation_mode:
             target_voltage = self.config.initial_battery_voltage_v
-        self._battery_voltage_model = approach(self._battery_voltage_model, target_voltage, 0.15)
+        self._battery_voltage_model = apply_variation(
+            self._battery_voltage_model,
+            target_voltage,
+            0.15,
+            voltage_jitter,
+            voltage_band,
+            10.0,
+            self.config.initial_battery_voltage_v + 0.2,
+        )
         self.snapshot.telemetry.battery_voltage_v = round(max(10.0, self._battery_voltage_model), 1)
 
         if self._runtime_anchor is not None:

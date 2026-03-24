@@ -17,6 +17,17 @@ from protocol import Frame
 
 
 class EmulatorTests(unittest.TestCase):
+    def _telemetry_tuple(self, heater: FakeAir2DHeater) -> tuple[int, int, float, int, int, float]:
+        telemetry = heater.snapshot.telemetry
+        return (
+            telemetry.internal_temperature_c,
+            telemetry.heater_temperature_c,
+            telemetry.battery_voltage_v,
+            telemetry.fan_rpm_set,
+            telemetry.fan_rpm_actual,
+            telemetry.fuel_pump_frequency_hz,
+        )
+
     def test_start_and_status_round_trip(self):
         heater = FakeAir2DHeater()
         settings = HeaterSettings(
@@ -154,6 +165,91 @@ class EmulatorTests(unittest.TestCase):
         self.assertGreaterEqual(heater.snapshot.runtime_seconds, 2)
         self.assertIn(heater.snapshot.phase, {HeaterPhase.WARMING_UP, HeaterPhase.RUNNING})
         self.assertLess(heater.snapshot.telemetry.fan_rpm_set, 100)
+
+    def test_seeded_random_telemetry_is_reproducible(self):
+        config = EmulatorConfig(
+            initial_phase=HeaterPhase.RUNNING,
+            initial_external_temperature_c=18,
+            random_seed=7,
+        )
+        heater_a = FakeAir2DHeater(config)
+        heater_b = FakeAir2DHeater(config)
+        base_a = heater_a._last_tick
+        base_b = heater_b._last_tick
+
+        observed_a = []
+        observed_b = []
+        for offset in (1.0, 2.0, 3.0):
+            heater_a.tick(now=base_a + offset)
+            heater_b.tick(now=base_b + offset)
+            observed_a.append(self._telemetry_tuple(heater_a))
+            observed_b.append(self._telemetry_tuple(heater_b))
+
+        self.assertEqual(observed_a, observed_b)
+
+    def test_running_phase_telemetry_moves_within_plausible_bounds(self):
+        heater = FakeAir2DHeater(
+            EmulatorConfig(
+                initial_phase=HeaterPhase.RUNNING,
+                initial_external_temperature_c=16,
+                random_seed=19,
+            )
+        )
+        base = heater._last_tick
+        first = self._telemetry_tuple(heater)
+        samples = []
+
+        for offset in (1.0, 2.0, 3.0, 4.0):
+            heater.tick(now=base + offset)
+            samples.append(self._telemetry_tuple(heater))
+
+        self.assertTrue(any(sample != first for sample in samples))
+        for internal_temp, heater_temp, battery_voltage, fan_set, fan_actual, pump_frequency in samples:
+            self.assertGreaterEqual(internal_temp, 14)
+            self.assertLessEqual(internal_temp, 58)
+            self.assertGreaterEqual(heater_temp, 20)
+            self.assertLessEqual(heater_temp, 90)
+            self.assertGreaterEqual(battery_voltage, 10.0)
+            self.assertLessEqual(battery_voltage, 12.8)
+            self.assertGreaterEqual(fan_set, 0)
+            self.assertLessEqual(fan_set, 100)
+            self.assertGreaterEqual(fan_actual, 0)
+            self.assertLessEqual(fan_actual, fan_set)
+            self.assertGreaterEqual(pump_frequency, 0.0)
+            self.assertLessEqual(pump_frequency, 1.5)
+
+    def test_phase_envelopes_differ_between_off_running_and_shutdown(self):
+        off = FakeAir2DHeater(
+            EmulatorConfig(
+                initial_phase=HeaterPhase.OFF,
+                initial_external_temperature_c=15,
+                random_seed=3,
+            )
+        )
+        running = FakeAir2DHeater(
+            EmulatorConfig(
+                initial_phase=HeaterPhase.RUNNING,
+                initial_external_temperature_c=15,
+                random_seed=3,
+            )
+        )
+        shutting_down = FakeAir2DHeater(
+            EmulatorConfig(
+                initial_phase=HeaterPhase.SHUTTING_DOWN,
+                initial_external_temperature_c=15,
+                random_seed=3,
+            )
+        )
+
+        off.tick(now=off._last_tick + 2.0)
+        running.tick(now=running._last_tick + 2.0)
+        shutting_down.tick(now=shutting_down._last_tick + 2.0)
+
+        self.assertEqual(off.snapshot.telemetry.fuel_pump_frequency_hz, 0.0)
+        self.assertGreater(running.snapshot.telemetry.fan_rpm_set, shutting_down.snapshot.telemetry.fan_rpm_set)
+        self.assertGreater(shutting_down.snapshot.telemetry.fan_rpm_set, off.snapshot.telemetry.fan_rpm_set)
+        self.assertGreater(running.snapshot.telemetry.heater_temperature_c, shutting_down.snapshot.telemetry.heater_temperature_c)
+        self.assertGreater(shutting_down.snapshot.telemetry.heater_temperature_c, off.snapshot.telemetry.heater_temperature_c)
 
     def test_duplicate_start_does_not_restart_state_machine(self):
         heater = FakeAir2DHeater()
