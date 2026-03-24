@@ -7,8 +7,8 @@ from configparser import ConfigParser
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from domain import OperatingMode
-from gx_dbus import DriverConfig, GeneratorDbusAdapter, MockVeDbusService
+from domain import HeaterPhase, OperatingMode
+from gx_dbus import DriverConfig, HeaterDbusAdapter, HeaterUiMode, MockVeDbusService
 from provider import DummyHeaterProvider, SerialHeaterProvider, SerialProviderConfig
 
 LOG = logging.getLogger(__name__)
@@ -25,13 +25,16 @@ class RuntimeConfig:
 
 
 class HeaterDriverApp:
-    def __init__(self, provider, dbus_adapter: GeneratorDbusAdapter) -> None:
+    def __init__(self, provider, dbus_adapter: HeaterDbusAdapter) -> None:
         self.provider = provider
         self.dbus_adapter = dbus_adapter
 
     def startstop(self, enabled: bool) -> bool:
         if enabled:
-            snapshot = self.provider.start(self.provider.get_snapshot().settings)
+            if self.dbus_adapter.current_heater_mode == HeaterUiMode.VENTILATION:
+                snapshot = self.provider.start_ventilation(self.provider.get_snapshot().settings.power_level)
+            else:
+                snapshot = self.provider.start(self.provider.get_snapshot().settings)
         else:
             snapshot = self.provider.stop()
         self.dbus_adapter.publish_snapshot(snapshot, self.provider.get_health().connected)
@@ -55,8 +58,14 @@ class HeaterDriverApp:
         return self._update_settings(power_level=int(power_level))
 
     def _update_settings(self, **changes) -> bool:
-        settings = replace(self.provider.get_snapshot().settings, **changes)
-        snapshot = self.provider.update_settings(settings)
+        current_snapshot = self.provider.get_snapshot()
+        settings = replace(current_snapshot.settings, **changes)
+        active = current_snapshot.phase in {HeaterPhase.STARTING, HeaterPhase.WARMING_UP, HeaterPhase.RUNNING}
+        if self.dbus_adapter.current_heater_mode == HeaterUiMode.VENTILATION:
+            current_snapshot.settings = settings
+            snapshot = self.provider.start_ventilation(settings.power_level) if active else current_snapshot
+        else:
+            snapshot = self.provider.update_settings(settings)
         self.dbus_adapter.publish_snapshot(snapshot, self.provider.get_health().connected)
         return True
 
@@ -205,13 +214,9 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         LOG.exception("initial provider connect failed; continuing in disconnected mode")
     service = MockVeDbusService(runtime.driver_config.service_name) if runtime.mock_dbus else None
-    startstop_service = (
-        MockVeDbusService(runtime.driver_config.startstop_service_name) if runtime.mock_dbus else None
-    )
-    dbus_adapter = GeneratorDbusAdapter(
+    dbus_adapter = HeaterDbusAdapter(
         config=runtime.driver_config,
         service=service,
-        startstop_service=startstop_service,
     )
     app = HeaterDriverApp(provider, dbus_adapter)
 

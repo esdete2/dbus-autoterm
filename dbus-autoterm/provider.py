@@ -17,6 +17,7 @@ from controller import (
     build_start_frame,
     build_status_request_frame,
     build_stop_frame,
+    build_ventilation_frame,
     build_version_request_frame,
     parse_settings_payload,
     parse_status_payload,
@@ -48,6 +49,9 @@ class HeaterProvider(Protocol):
         ...
 
     def stop(self) -> HeaterSnapshot:
+        ...
+
+    def start_ventilation(self, power_level: int) -> HeaterSnapshot:
         ...
 
     def update_settings(self, settings: HeaterSettings) -> HeaterSnapshot:
@@ -93,14 +97,25 @@ class DummyHeaterProvider:
         now = time.monotonic()
         phase_elapsed = now - self._phase_started_monotonic
 
-        if self._snapshot.phase == HeaterPhase.STARTING and phase_elapsed >= 2.0:
+        if self._snapshot.ventilation_mode and self._snapshot.phase == HeaterPhase.STARTING and phase_elapsed >= 1.0:
+            self._set_phase(HeaterPhase.RUNNING)
+        elif self._snapshot.phase == HeaterPhase.STARTING and phase_elapsed >= 2.0:
             self._set_phase(HeaterPhase.WARMING_UP)
         elif self._snapshot.phase == HeaterPhase.WARMING_UP and phase_elapsed >= 5.0:
             self._set_phase(HeaterPhase.RUNNING)
         elif self._snapshot.phase == HeaterPhase.SHUTTING_DOWN and phase_elapsed >= 4.0:
             self._set_phase(HeaterPhase.OFF)
 
-        if self._snapshot.phase == HeaterPhase.RUNNING:
+        if self._snapshot.phase == HeaterPhase.RUNNING and self._snapshot.ventilation_mode:
+            self._snapshot.runtime_seconds = int(max(0.0, now - self._runtime_anchor_monotonic))
+            self._snapshot.telemetry.heater_temperature_c = max(
+                self._snapshot.telemetry.internal_temperature_c,
+                self._snapshot.telemetry.heater_temperature_c - 1,
+            )
+            self._snapshot.telemetry.fan_rpm_set = 24 + (self._snapshot.settings.power_level * 5)
+            self._snapshot.telemetry.fan_rpm_actual = max(0, self._snapshot.telemetry.fan_rpm_set - 2)
+            self._snapshot.telemetry.fuel_pump_frequency_hz = 0.0
+        elif self._snapshot.phase == HeaterPhase.RUNNING:
             self._snapshot.runtime_seconds = int(max(0.0, now - self._runtime_anchor_monotonic))
             self._snapshot.telemetry.heater_temperature_c = min(
                 75,
@@ -115,6 +130,7 @@ class DummyHeaterProvider:
 
     def start(self, settings: HeaterSettings) -> HeaterSnapshot:
         self._snapshot.settings = settings
+        self._snapshot.ventilation_mode = False
         self._snapshot.runtime_seconds = 0
         self._runtime_anchor_monotonic = time.monotonic()
         self._snapshot.telemetry.error_code = 0
@@ -124,7 +140,20 @@ class DummyHeaterProvider:
     def stop(self) -> HeaterSnapshot:
         if self._snapshot.phase == HeaterPhase.OFF:
             return self.refresh()
+        self._snapshot.ventilation_mode = False
         self._set_phase(HeaterPhase.SHUTTING_DOWN)
+        return self.refresh()
+
+    def start_ventilation(self, power_level: int) -> HeaterSnapshot:
+        self._snapshot.settings.power_level = int(power_level)
+        self._snapshot.ventilation_mode = True
+        self._snapshot.runtime_seconds = 0
+        self._runtime_anchor_monotonic = time.monotonic()
+        self._snapshot.telemetry.error_code = 0
+        self._set_phase(HeaterPhase.STARTING)
+        self._snapshot.telemetry.fan_rpm_set = 18 + (self._snapshot.settings.power_level * 4)
+        self._snapshot.telemetry.fan_rpm_actual = max(0, self._snapshot.telemetry.fan_rpm_set - 2)
+        self._snapshot.telemetry.fuel_pump_frequency_hz = 0.0
         return self.refresh()
 
     def update_settings(self, settings: HeaterSettings) -> HeaterSnapshot:
@@ -140,6 +169,7 @@ class DummyHeaterProvider:
         self._phase_started_monotonic = time.monotonic()
 
         if phase == HeaterPhase.OFF:
+            self._snapshot.ventilation_mode = False
             self._snapshot.runtime_seconds = 0
             self._snapshot.telemetry.status_code_major = 0
             self._snapshot.telemetry.status_code_minor = 1
@@ -154,7 +184,7 @@ class DummyHeaterProvider:
             self._snapshot.telemetry.status_code_minor = 1
             self._snapshot.telemetry.fan_rpm_set = 18
             self._snapshot.telemetry.fan_rpm_actual = 16
-            self._snapshot.telemetry.fuel_pump_frequency_hz = 0.12
+            self._snapshot.telemetry.fuel_pump_frequency_hz = 0.0 if self._snapshot.ventilation_mode else 0.12
             self._snapshot.telemetry.heater_temperature_c = 30
             return
 
@@ -313,16 +343,26 @@ class SerialHeaterProvider:
 
     def start(self, settings: HeaterSettings) -> HeaterSnapshot:
         self._snapshot.settings = settings
+        self._snapshot.ventilation_mode = False
         self._exchange(build_start_frame(self._config.profile.controller_device, settings))
         self._exchange(build_start_frame(self._config.profile.controller_device, settings))
         return self.refresh()
 
     def stop(self) -> HeaterSnapshot:
+        self._snapshot.ventilation_mode = False
         self._exchange(build_stop_frame(self._config.profile.controller_device))
+        return self.refresh()
+
+    def start_ventilation(self, power_level: int) -> HeaterSnapshot:
+        self._snapshot.settings.power_level = int(power_level)
+        self._snapshot.ventilation_mode = True
+        self._exchange(build_ventilation_frame(self._config.profile.controller_device, int(power_level)))
+        self._exchange(build_ventilation_frame(self._config.profile.controller_device, int(power_level)))
         return self.refresh()
 
     def update_settings(self, settings: HeaterSettings) -> HeaterSnapshot:
         self._snapshot.settings = settings
+        self._snapshot.ventilation_mode = False
         self._exchange(build_settings_frame(self._config.profile.controller_device, settings))
         self._exchange(build_settings_frame(self._config.profile.controller_device, settings))
         return self.refresh()

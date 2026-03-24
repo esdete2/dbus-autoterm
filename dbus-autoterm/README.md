@@ -1,6 +1,6 @@
 # dbus-autoterm
 
-`dbus-autoterm` is a Venus OS D-Bus generator-style plugin for integrating an Autoterm AIR 2D heater with a Victron GX device. The current plugin is dummy-complete: the full Venus OS service shell, config handling, and D-Bus publication path are in place, while the runtime backend still uses deterministic dummy values by default.
+`dbus-autoterm` is a Venus OS D-Bus plugin for integrating an Autoterm AIR 2D heater with a Victron GX device. The current plugin publishes a dedicated `heater` service for a custom GX Touch UI. The runtime backend is still dummy-first by default, so the full Venus service shell, config handling, and D-Bus publication path can be validated without heater hardware.
 
 For real serial testing on a Cerbo GX, the important operational detail is that Venus OS runs `serial-starter`, which probes generic USB serial adapters and can attach competing services to `/dev/ttyUSB*`. A stock FT232R adapter is additionally classified by the default Venus rule set as `FT232R_USB_UART`, which marks it as `rs485:default`. Removing that stock FT232R classification alone is not sufficient, because generic `serial-starter` probing still continues unless the adapter is explicitly marked with `VE_SERVICE="ignore"`. Those probes can interfere with `dbus-autoterm` when both processes try to use the same underlying tty.
 
@@ -10,7 +10,7 @@ For real serial testing on a Cerbo GX, the important operational detail is that 
 - Default backend is `dummy`, so the plugin can be installed and tested on a Cerbo GX without heater hardware.
 - Runtime is direct Python execution via `python3 app.py`; Cerbo installation does not depend on `pip install -e`, PyPI, or internet access.
 - `velib_python` is bundled under `ext/velib_python`.
-- The existing genset telemetry service is paired with a `com.victronenergy.generator.startstop1` shim so the stock Venus genset page can drive manual start/stop and autostart without patching `venus-gui-v2`.
+- Primary UX comes from a dedicated `com.victronenergy.heater.autoterm_air2d` service plus installed custom GUI-v2 heater pages.
 - The future `serial` backend remains in the tree for later hardware integration, but it is not part of the default install path.
 - Serial unplug/replug recovery is implemented in the provider so the service can recover when the tty disappears and later returns.
 
@@ -19,14 +19,12 @@ For real serial testing on a Cerbo GX, the important operational detail is that 
 - Install path: `/data/apps/dbus-autoterm`
 - Config path: `/data/apps/dbus-autoterm/config.ini`
 - Service path: `/service/dbus-autoterm`
-- D-Bus service: `com.victronenergy.genset.autoterm_air2d`
-- UI control shim: `com.victronenergy.generator.startstop1`
+- Primary D-Bus service: `com.victronenergy.heater.autoterm_air2d`
 - Service entrypoint: `python3 app.py -c /data/apps/dbus-autoterm/config.ini`
 
-The stock Venus genset pages use the two services differently:
+The runtime uses one primary service:
 
-- `com.victronenergy.genset.autoterm_air2d` remains the primary telemetry source for status, runtime, AC-style power placeholders, voltage, and writable heater settings.
-- `com.victronenergy.generator.startstop1` exposes the generator-style `/ManualStart`, `/ManualStartTimer`, `/AutoStartEnabled`, `/State`, and `/RunningByConditionCode` paths expected by the Venus manual-control UI.
+- `com.victronenergy.heater.autoterm_air2d` is the source of truth for the custom heater page, live heater telemetry, timer placeholders, and heater-specific writable controls.
 
 ## Cerbo serial setup
 
@@ -98,6 +96,7 @@ What `install.sh` does:
 - creates `config.ini` from `config.sample.ini` if it does not exist
 - creates or refreshes `/service/dbus-autoterm`
 - ensures the adapter-specific `serial-starter.rules` ignore entry for `Autoterm_UART` exists
+- installs the custom GUI-v2 heater delegate and page stack under `/opt/victronenergy/gui-v2/Victron/VenusOS`
 - adds a reinstall hook to `/data/rc.local`
 - restarts the runit service if `svc` is available
 
@@ -231,12 +230,13 @@ The plugin is complete around the dummy runtime path:
 - direct Python runtime
 - config-driven startup
 - GLib-based Venus-style polling
-- generator-style D-Bus service publication
+- dedicated heater D-Bus service publication
+- custom GUI-v2 heater pages installed from the driver repo
 - runit service scripts
 - offline Cerbo installation flow
 
 What is still deferred:
 
 - long-term productization beyond the current FT232R-based Cerbo test harness
-- confirmed GX Touch UI validation against the final D-Bus path set
+- confirmed GX Touch UI validation against the final heater page set on target hardware
 - production heater integration with the AIR 2D protocol backend

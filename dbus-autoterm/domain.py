@@ -52,6 +52,7 @@ class HeaterSnapshot:
     settings: HeaterSettings = field(default_factory=HeaterSettings)
     telemetry: HeaterTelemetry = field(default_factory=HeaterTelemetry)
     runtime_seconds: int = 0
+    ventilation_mode: bool = False
     connected: bool = True
     last_update_monotonic: float = field(default_factory=time)
 

@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
+from enum import IntEnum
 from pathlib import Path
 from typing import Callable
 
 from controller import STATUS_TEXT
-from domain import HeaterPhase, HeaterSnapshot
+from domain import HeaterPhase, HeaterSnapshot, OperatingMode
 
 
 class MockVeDbusService:
@@ -70,7 +71,6 @@ class MockVeDbusService:
 
 
 def _prime_vedbus_import_path() -> None:
-    # dbus-autoterm carries velib_python locally so vedbus is available without system-wide packaging.
     app_root = Path(__file__).resolve().parent
     candidate = app_root / "ext" / "velib_python"
     if candidate.exists():
@@ -103,42 +103,122 @@ def build_vedbus_service(service_name: str):
         raise RuntimeError(f"Failed to create VeDbusService for {service_name}: {exc}") from exc
 
 
+class HeaterUiMode(IntEnum):
+    POWER = 0
+    TEMPERATURE = 1
+    VENTILATION = 2
+    HEAT_VENTILATION = 3
+
+
+class HeaterSensorSource(IntEnum):
+    CONTROLLER = 0
+    EXTERNAL = 1
+    HEATER = 2
+
+
+class HeaterState(IntEnum):
+    OFF = 0
+    STARTING = 1
+    WARMING_UP = 2
+    RUNNING = 3
+    SHUTTING_DOWN = 4
+    ERROR = 10
+
+
+@dataclass
+class HeaterTimerEntry:
+    enabled: int = 0
+    cycle: int = 0
+    days: int = 0x7F
+    start_hour: int = 6
+    start_minute: int = 0
+    duration_minutes: int = 30
+    mode: int = int(HeaterUiMode.TEMPERATURE)
+    target_temperature: int = 20
+    power_level: int = 2
+
+
 @dataclass
 class DriverConfig:
-    service_name: str = "com.victronenergy.genset.autoterm_air2d"
-    startstop_service_name: str = "com.victronenergy.generator.startstop1"
+    service_name: str = "com.victronenergy.heater.autoterm_air2d"
     device_instance: int = 287
-    startstop_device_instance: int = 1
     product_id: int = 0xC06B
-    product_name: str = "Autoterm Integration for Victron GX"
-    startstop_product_name: str = "Generator start/stop"
+    product_name: str = "Autoterm AIR 2D"
     firmware_version: str = "0.1.0"
     hardware_version: str = "AIR2D"
     connection: str = "UART"
 
 
-class GeneratorDbusAdapter:
-    # Maps HeaterSnapshot state into a temporary Venus genset service shape.
+class HeaterDbusAdapter:
     def __init__(
         self,
         config: DriverConfig | None = None,
         service=None,
-        startstop_service=None,
         on_startstop: Callable[[bool], bool] | None = None,
     ) -> None:
         self.config = config or DriverConfig()
         self.service = service or build_vedbus_service(self.config.service_name)
-        self.startstop_service = startstop_service or build_vedbus_service(self.config.startstop_service_name)
         self._on_startstop = on_startstop
         self._on_mode_change: Callable[[int], bool] | None = None
         self._on_target_temperature_change: Callable[[int], bool] | None = None
         self._on_power_level_change: Callable[[int], bool] | None = None
-        self._auto_start_enabled = 0
-        self._manual_start_requested = 0
-        self._manual_running_latch = 0
-        self._manual_start_timer = 0
+        self._heater_mode = HeaterUiMode.POWER
+        self._sensor_source = HeaterSensorSource.CONTROLLER
+        self._timers = [HeaterTimerEntry() for _ in range(3)]
         self._init_service()
-        self._init_startstop_service()
+
+    @property
+    def current_heater_mode(self) -> HeaterUiMode:
+        return self._heater_mode
+
+    @property
+    def current_operating_mode(self) -> OperatingMode:
+        return self._operating_mode_for_ui()
+
+    def _operating_mode_for_ui(self) -> OperatingMode:
+        if self._heater_mode == HeaterUiMode.POWER:
+            return OperatingMode.POWER
+        if self._sensor_source == HeaterSensorSource.EXTERNAL:
+            return OperatingMode.EXTERNAL_TEMPERATURE
+        if self._sensor_source == HeaterSensorSource.HEATER:
+            return OperatingMode.HEATER_TEMPERATURE
+        return OperatingMode.CONTROLLER_TEMPERATURE
+
+    def _sync_sensor_source_from_mode(self, mode: OperatingMode) -> None:
+        if mode == OperatingMode.EXTERNAL_TEMPERATURE:
+            self._sensor_source = HeaterSensorSource.EXTERNAL
+        elif mode == OperatingMode.HEATER_TEMPERATURE:
+            self._sensor_source = HeaterSensorSource.HEATER
+        elif mode == OperatingMode.CONTROLLER_TEMPERATURE:
+            self._sensor_source = HeaterSensorSource.CONTROLLER
+
+    def _mode_text(self) -> str:
+        return {
+            HeaterUiMode.POWER: "Power",
+            HeaterUiMode.TEMPERATURE: "Temperature",
+            HeaterUiMode.VENTILATION: "Ventilation",
+            HeaterUiMode.HEAT_VENTILATION: "Heat + ventilation",
+        }[self._heater_mode]
+
+    def _sensor_source_text(self) -> str:
+        return {
+            HeaterSensorSource.CONTROLLER: "Controller",
+            HeaterSensorSource.EXTERNAL: "External",
+            HeaterSensorSource.HEATER: "Heater",
+        }[self._sensor_source]
+
+    def _timer_callback(self, index: int, field: str, minimum: int = 0, maximum: int | None = None):
+        def _callback(path: str, value: object) -> bool:
+            del path
+            timer = self._timers[index]
+            numeric = int(value)
+            if maximum is not None:
+                numeric = min(maximum, numeric)
+            numeric = max(minimum, numeric)
+            setattr(timer, field, numeric)
+            return True
+
+        return _callback
 
     def _init_service(self) -> None:
         self.service.add_mandatory_paths(
@@ -153,30 +233,24 @@ class GeneratorDbusAdapter:
             connected=1,
         )
         self.service.add_path("/CustomName", self.config.product_name)
-        self.service.add_path("/Role", "genset")
-        self.service.add_path("/NrOfPhases", 1)
-        self.service.add_path("/RemoteStartModeEnabled", 1)
-        self.service.add_path("/Start", 0)
-        self.service.add_path("/AutoStart", 0)
-        self.service.add_path("/State", int(HeaterPhase.OFF))
-        self.service.add_path("/StatusCode", 0)
-        self.service.add_path("/StatusCodeMajor", 0)
-        self.service.add_path("/StatusCodeMinor", 1)
-        self.service.add_path("/StatusText", "off")
+        self.service.add_path("/Role", "heater")
+        self.service.add_path("/State", int(HeaterState.OFF))
+        self.service.add_path("/StateText", "off")
+        self.service.add_path("/Mode", int(self._heater_mode), writeable=True, onchangecallback=self._handle_heater_mode_change)
+        self.service.add_path("/ModeText", self._mode_text())
         self.service.add_path("/StartStop", 0, writeable=True, onchangecallback=self._handle_startstop)
-        self.service.add_path("/ErrorCode", 0)
-        self.service.add_path("/Error/0/Id", "")
         self.service.add_path("/Runtime", 0)
+        self.service.add_path("/ErrorCode", 0)
+        self.service.add_path("/ErrorText", "")
         self.service.add_path("/Alarms/Communication", 0)
-        self.service.add_path("/Ac/Frequency", 0.0)
-        self.service.add_path("/Ac/Power", 0)
-        self.service.add_path("/Ac/L1/Voltage", 0.0)
-        self.service.add_path("/Ac/L1/Current", 0.0)
-        self.service.add_path("/Ac/L1/Power", 0)
         self.service.add_path("/Dc/0/Voltage", 0.0)
+        self.service.add_path("/Temperatures/Internal", None)
+        self.service.add_path("/Temperatures/Control", None)
         self.service.add_path("/Temperatures/Heater", None)
-        self.service.add_path("/Temperatures/External", None)
-        self.service.add_path("/Settings/Mode", 4, writeable=True, onchangecallback=self._handle_mode_change)
+        self.service.add_path("/Status/FanRpmSet", 0)
+        self.service.add_path("/Status/FanRpmActual", 0)
+        self.service.add_path("/Status/FuelPumpFrequency", 0.0)
+        self.service.add_path("/Settings/Mode", int(OperatingMode.POWER))
         self.service.add_path(
             "/Settings/TargetTemperature",
             15,
@@ -189,67 +263,68 @@ class GeneratorDbusAdapter:
             writeable=True,
             onchangecallback=self._handle_power_level_change,
         )
+        self.service.add_path(
+            "/Settings/SensorSource",
+            int(self._sensor_source),
+            writeable=True,
+            onchangecallback=self._handle_sensor_source_change,
+        )
+        self.service.add_path("/Settings/SensorSourceText", self._sensor_source_text())
+        for index in range(len(self._timers)):
+            prefix = f"/Timers/{index}"
+            self.service.add_path(f"{prefix}/Enabled", self._timers[index].enabled, writeable=True, onchangecallback=self._timer_callback(index, "enabled", 0, 1))
+            self.service.add_path(f"{prefix}/Cycle", self._timers[index].cycle, writeable=True, onchangecallback=self._timer_callback(index, "cycle", 0, 2))
+            self.service.add_path(f"{prefix}/Days", self._timers[index].days, writeable=True, onchangecallback=self._timer_callback(index, "days", 0, 0x7F))
+            self.service.add_path(f"{prefix}/StartHour", self._timers[index].start_hour, writeable=True, onchangecallback=self._timer_callback(index, "start_hour", 0, 23))
+            self.service.add_path(f"{prefix}/StartMinute", self._timers[index].start_minute, writeable=True, onchangecallback=self._timer_callback(index, "start_minute", 0, 59))
+            self.service.add_path(f"{prefix}/DurationMinutes", self._timers[index].duration_minutes, writeable=True, onchangecallback=self._timer_callback(index, "duration_minutes", 1, 24 * 60))
+            self.service.add_path(f"{prefix}/Mode", self._timers[index].mode, writeable=True, onchangecallback=self._timer_callback(index, "mode", int(HeaterUiMode.POWER), int(HeaterUiMode.HEAT_VENTILATION)))
+            self.service.add_path(f"{prefix}/TargetTemperature", self._timers[index].target_temperature, writeable=True, onchangecallback=self._timer_callback(index, "target_temperature", 5, 35))
+            self.service.add_path(f"{prefix}/PowerLevel", self._timers[index].power_level, writeable=True, onchangecallback=self._timer_callback(index, "power_level", 1, 9))
         self.service.register()
-
-    def _init_startstop_service(self) -> None:
-        self.startstop_service.add_mandatory_paths(
-            processname=__file__,
-            processversion=self.config.firmware_version,
-            connection="generator",
-            deviceinstance=self.config.startstop_device_instance,
-            productid=0,
-            productname=self.config.startstop_product_name,
-            firmwareversion=self.config.firmware_version,
-            hardwareversion=self.config.hardware_version,
-            connected=1,
-        )
-        self.startstop_service.add_path("/Enabled", 1)
-        self.startstop_service.add_path(
-            "/AutoStartEnabled",
-            0,
-            writeable=True,
-            onchangecallback=self._handle_autostart_enabled,
-        )
-        self.startstop_service.add_path(
-            "/ManualStart",
-            0,
-            writeable=True,
-            onchangecallback=self._handle_manual_start,
-        )
-        self.startstop_service.add_path(
-            "/ManualStartTimer",
-            0,
-            writeable=True,
-            onchangecallback=self._handle_manual_start_timer,
-        )
-        self.startstop_service.add_path("/State", 0)
-        self.startstop_service.add_path("/RunningByConditionCode", 0)
-        self.startstop_service.add_path("/Runtime", 0)
-        self.startstop_service.add_path("/Error", 0)
-        self.startstop_service.add_path("/GensetInstance", self.config.device_instance)
-        self.startstop_service.add_path("/GensetService", self.config.service_name)
-        self.startstop_service.add_path("/GensetServiceType", "genset")
-        self.startstop_service.add_path("/Capabilities", 0)
-        self.startstop_service.add_path("/Type", 1)
-        self.startstop_service.register()
 
     def _handle_startstop(self, path: str, value: object) -> bool:
         del path
         if self._on_startstop is None:
             return False
-        enabled = bool(value)
-        if not self._on_startstop(enabled):
-            return False
-        self._manual_start_requested = 1 if enabled else 0
-        if enabled:
-            self._manual_running_latch = 1
-        return True
+        return self._on_startstop(bool(value))
 
-    def _handle_mode_change(self, path: str, value: object) -> bool:
+    def _handle_heater_mode_change(self, path: str, value: object) -> bool:
         del path
-        if self._on_mode_change is None:
+        try:
+            new_mode = HeaterUiMode(int(value))
+        except ValueError:
             return False
-        return self._on_mode_change(int(value))
+
+        previous_mode = self._heater_mode
+        self._heater_mode = new_mode
+        if new_mode == HeaterUiMode.VENTILATION:
+            return True
+        if self._on_mode_change is None:
+            self._heater_mode = previous_mode
+            return False
+        if self._on_mode_change(int(self._operating_mode_for_ui())):
+            return True
+        self._heater_mode = previous_mode
+        return False
+
+    def _handle_sensor_source_change(self, path: str, value: object) -> bool:
+        del path
+        try:
+            sensor_source = HeaterSensorSource(int(value))
+        except ValueError:
+            return False
+        previous_sensor = self._sensor_source
+        self._sensor_source = sensor_source
+        if self._heater_mode not in {HeaterUiMode.TEMPERATURE, HeaterUiMode.HEAT_VENTILATION}:
+            return True
+        if self._on_mode_change is None:
+            self._sensor_source = previous_sensor
+            return False
+        if self._on_mode_change(int(self._operating_mode_for_ui())):
+            return True
+        self._sensor_source = previous_sensor
+        return False
 
     def _handle_target_temperature_change(self, path: str, value: object) -> bool:
         del path
@@ -263,110 +338,80 @@ class GeneratorDbusAdapter:
             return False
         return self._on_power_level_change(int(value))
 
-    def _handle_autostart_enabled(self, path: str, value: object) -> bool:
-        del path
-        self._auto_start_enabled = 1 if bool(value) else 0
-        return True
-
-    def _handle_manual_start_timer(self, path: str, value: object) -> bool:
-        del path
-        self._manual_start_timer = max(0, int(value))
-        return True
-
-    def _handle_manual_start(self, path: str, value: object) -> bool:
-        del path
-        if self._on_startstop is None:
-            return False
-        enabled = bool(value)
-        if not self._on_startstop(enabled):
-            return False
-        self._manual_start_requested = 1 if enabled else 0
-        if enabled:
-            self._manual_running_latch = 1
-        return True
-
-    def _genset_status_code(self, snapshot: HeaterSnapshot, is_connected: bool) -> int:
+    def _heater_state(self, snapshot: HeaterSnapshot, is_connected: bool) -> int:
         if not is_connected or snapshot.telemetry.error_code:
-            return 10
-        if snapshot.phase == HeaterPhase.OFF:
-            return 0
-        if snapshot.phase == HeaterPhase.STARTING:
-            return 1
-        if snapshot.phase == HeaterPhase.WARMING_UP:
-            return 4
-        if snapshot.phase == HeaterPhase.RUNNING:
-            return 8
-        return 9
+            return int(HeaterState.ERROR)
+        return {
+            HeaterPhase.OFF: HeaterState.OFF,
+            HeaterPhase.STARTING: HeaterState.STARTING,
+            HeaterPhase.WARMING_UP: HeaterState.WARMING_UP,
+            HeaterPhase.RUNNING: HeaterState.RUNNING,
+            HeaterPhase.SHUTTING_DOWN: HeaterState.SHUTTING_DOWN,
+        }[snapshot.phase]
 
-    def _generator_state(self, snapshot: HeaterSnapshot, is_connected: bool) -> int:
-        if not is_connected or snapshot.telemetry.error_code:
-            return 10
-        if snapshot.phase == HeaterPhase.OFF:
-            return 0
-        if snapshot.phase in {HeaterPhase.STARTING, HeaterPhase.WARMING_UP}:
-            return 2
-        if snapshot.phase == HeaterPhase.RUNNING:
-            return 1
-        return 3
+    def _heater_state_text(self, snapshot: HeaterSnapshot, is_connected: bool) -> str:
+        if not is_connected:
+            return "not connected"
+        if snapshot.telemetry.error_code:
+            return "fault"
+        if snapshot.ventilation_mode:
+            if snapshot.phase == HeaterPhase.STARTING:
+                return "starting ventilation"
+            if snapshot.phase == HeaterPhase.SHUTTING_DOWN:
+                return "stopping ventilation"
+            if snapshot.phase == HeaterPhase.RUNNING:
+                return "ventilation"
+        return STATUS_TEXT.get(snapshot.phase, "unknown")
 
-    def _running_by_condition(self, snapshot: HeaterSnapshot, is_connected: bool) -> int:
-        if not is_connected or snapshot.telemetry.error_code or snapshot.phase == HeaterPhase.OFF:
-            return 0
-        return 1 if self._manual_running_latch else 0
+    def _error_text(self, snapshot: HeaterSnapshot, is_connected: bool) -> str:
+        if not is_connected:
+            return "Communication error"
+        if snapshot.telemetry.error_code:
+            return f"Heater error {snapshot.telemetry.error_code}"
+        return ""
 
-    def _ac_metrics(self, snapshot: HeaterSnapshot) -> tuple[float, float, int]:
-        if snapshot.phase not in {HeaterPhase.STARTING, HeaterPhase.WARMING_UP, HeaterPhase.RUNNING, HeaterPhase.SHUTTING_DOWN}:
-            return 0.0, 0.0, 0
-        if snapshot.phase == HeaterPhase.RUNNING:
-            voltage = 230.0
-            power = 900 + (snapshot.settings.power_level * 350)
-        elif snapshot.phase == HeaterPhase.SHUTTING_DOWN:
-            voltage = 230.0
-            power = 250
-        else:
-            voltage = 230.0
-            power = 500
-        current = round(power / voltage, 2)
-        return voltage, current, power
+    def _control_temperature(self, snapshot: HeaterSnapshot):
+        if self._sensor_source == HeaterSensorSource.EXTERNAL:
+            return snapshot.telemetry.external_temperature_c
+        if self._sensor_source == HeaterSensorSource.HEATER:
+            return snapshot.telemetry.heater_temperature_c
+        return (
+            snapshot.telemetry.controller_temperature_c
+            if snapshot.telemetry.controller_temperature_c is not None
+            else snapshot.telemetry.internal_temperature_c
+        )
 
     def publish_snapshot(self, snapshot: HeaterSnapshot, connected: bool) -> None:
         is_connected = bool(connected and snapshot.connected)
-        if snapshot.phase == HeaterPhase.OFF:
-            self._manual_running_latch = 0
-        genset_status_code = self._genset_status_code(snapshot, is_connected)
-        ac_voltage, ac_current, ac_power = self._ac_metrics(snapshot)
-        generator_state = self._generator_state(snapshot, is_connected)
-        running_by_condition = self._running_by_condition(snapshot, is_connected)
+
+        if snapshot.ventilation_mode:
+            self._heater_mode = HeaterUiMode.VENTILATION
+        elif snapshot.settings.mode == OperatingMode.POWER:
+            if self._heater_mode not in {HeaterUiMode.VENTILATION, HeaterUiMode.HEAT_VENTILATION}:
+                self._heater_mode = HeaterUiMode.POWER
+        elif self._heater_mode not in {HeaterUiMode.VENTILATION, HeaterUiMode.HEAT_VENTILATION}:
+            self._heater_mode = HeaterUiMode.TEMPERATURE
+        self._sync_sensor_source_from_mode(snapshot.settings.mode)
 
         self.service["/Connected"] = 1 if is_connected else 0
-        self.service["/State"] = generator_state
-        self.service["/StatusCode"] = genset_status_code
-        self.service["/StatusCodeMajor"] = snapshot.telemetry.status_code_major
-        self.service["/StatusCodeMinor"] = snapshot.telemetry.status_code_minor
-        self.service["/StatusText"] = STATUS_TEXT.get(snapshot.phase, "unknown")
+        self.service["/State"] = self._heater_state(snapshot, is_connected)
+        self.service["/StateText"] = self._heater_state_text(snapshot, is_connected)
+        self.service["/Mode"] = int(self._heater_mode)
+        self.service["/ModeText"] = self._mode_text()
         self.service["/StartStop"] = 1 if snapshot.phase in {HeaterPhase.STARTING, HeaterPhase.WARMING_UP, HeaterPhase.RUNNING} else 0
-        self.service["/Start"] = self.service["/StartStop"]
-        self.service["/AutoStart"] = self._auto_start_enabled
-        self.service["/ErrorCode"] = snapshot.telemetry.error_code
-        self.service["/Error/0/Id"] = "" if snapshot.telemetry.error_code == 0 else str(snapshot.telemetry.error_code)
         self.service["/Runtime"] = snapshot.runtime_seconds
+        self.service["/ErrorCode"] = snapshot.telemetry.error_code if is_connected else 1
+        self.service["/ErrorText"] = self._error_text(snapshot, is_connected)
         self.service["/Alarms/Communication"] = 0 if is_connected else 2
-        self.service["/Ac/Frequency"] = 50.0 if ac_power else 0.0
-        self.service["/Ac/Power"] = ac_power
-        self.service["/Ac/L1/Voltage"] = ac_voltage
-        self.service["/Ac/L1/Current"] = ac_current
-        self.service["/Ac/L1/Power"] = ac_power
         self.service["/Dc/0/Voltage"] = snapshot.telemetry.battery_voltage_v
+        self.service["/Temperatures/Internal"] = snapshot.telemetry.internal_temperature_c
+        self.service["/Temperatures/Control"] = self._control_temperature(snapshot)
         self.service["/Temperatures/Heater"] = snapshot.telemetry.heater_temperature_c
-        self.service["/Temperatures/External"] = snapshot.telemetry.external_temperature_c
+        self.service["/Status/FanRpmSet"] = snapshot.telemetry.fan_rpm_set
+        self.service["/Status/FanRpmActual"] = snapshot.telemetry.fan_rpm_actual
+        self.service["/Status/FuelPumpFrequency"] = snapshot.telemetry.fuel_pump_frequency_hz
         self.service["/Settings/Mode"] = int(snapshot.settings.mode)
         self.service["/Settings/TargetTemperature"] = snapshot.settings.setpoint_c
         self.service["/Settings/PowerLevel"] = snapshot.settings.power_level
-        self.startstop_service["/Connected"] = 1 if is_connected else 0
-        self.startstop_service["/AutoStartEnabled"] = self._auto_start_enabled
-        self.startstop_service["/ManualStart"] = self._manual_start_requested
-        self.startstop_service["/ManualStartTimer"] = self._manual_start_timer
-        self.startstop_service["/State"] = generator_state
-        self.startstop_service["/RunningByConditionCode"] = running_by_condition
-        self.startstop_service["/Runtime"] = snapshot.runtime_seconds
-        self.startstop_service["/Error"] = snapshot.telemetry.error_code if snapshot.telemetry.error_code else (1 if not is_connected else 0)
+        self.service["/Settings/SensorSource"] = int(self._sensor_source)
+        self.service["/Settings/SensorSourceText"] = self._sensor_source_text()

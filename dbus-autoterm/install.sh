@@ -17,6 +17,7 @@ remount_root() {
 }
 
 chmod 744 "$SCRIPT_DIR/install.sh" "$SCRIPT_DIR/restart.sh" "$SCRIPT_DIR/uninstall.sh" "$SCRIPT_DIR/enable.sh" "$SCRIPT_DIR/disable.sh"
+chmod 744 "$SCRIPT_DIR/custom-gui-install.sh" "$SCRIPT_DIR/custom-gui-uninstall.sh"
 chmod 755 "$SCRIPT_DIR/service/run" "$SCRIPT_DIR/service/log/run"
 
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -47,6 +48,7 @@ if [ -f "$SERIAL_STARTER_RULES" ]; then
     fi
     udevadm control --reload || true
 fi
+bash "$SCRIPT_DIR/custom-gui-install.sh"
 # Re-run install on boot so the service link is recreated after Venus OS maintenance or image changes.
 grep -qxF "$INSTALL_LINE" "$RC_LOCAL" || echo "$INSTALL_LINE" >> "$RC_LOCAL"
 remount_root ro

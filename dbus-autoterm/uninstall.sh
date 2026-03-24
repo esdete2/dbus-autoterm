@@ -27,6 +27,7 @@ if [ -f "$SERIAL_STARTER_RULES" ]; then
     sed -i "\\|$SERIAL_STARTER_RULE|d" "$SERIAL_STARTER_RULES"
     udevadm control --reload || true
 fi
+bash "$SCRIPT_DIR/custom-gui-uninstall.sh"
 remount_root ro
 
 pkill -f "/data/apps/dbus-autoterm/app.py" || true
