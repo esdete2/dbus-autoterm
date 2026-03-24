@@ -6,6 +6,8 @@ SERVICE_NAME="dbus-autoterm"
 SERVICE_LINK="/service/$SERVICE_NAME"
 RC_LOCAL="/data/rc.local"
 INSTALL_LINE="bash $SCRIPT_DIR/install.sh"
+SERIAL_STARTER_RULES="/etc/udev/rules.d/serial-starter.rules"
+SERIAL_STARTER_RULE='ACTION=="add", SUBSYSTEM=="tty", SUBSYSTEMS=="platform|usb-serial", ENV{ID_BUS}=="usb", ENV{ID_MODEL}=="Autoterm_UART", ENV{VE_SERVICE}="ignore", SYMLINK+="ttyAUTOTERM"'
 
 remount_root() {
     mount -o "remount,$1" / >/dev/null 2>&1 || true
@@ -20,6 +22,10 @@ rm -f "$SERVICE_LINK"
 
 if [ -f "$RC_LOCAL" ]; then
     sed -i "\\|$INSTALL_LINE|d" "$RC_LOCAL"
+fi
+if [ -f "$SERIAL_STARTER_RULES" ]; then
+    sed -i "\\|$SERIAL_STARTER_RULE|d" "$SERIAL_STARTER_RULES"
+    udevadm control --reload || true
 fi
 remount_root ro
 

@@ -4,6 +4,7 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Protocol
+from serial.serialutil import SerialException
 
 from controller import (
     MSG_SETTINGS,
@@ -61,7 +62,6 @@ class SerialProviderConfig:
     device: str
     profile: ProtocolProfile = CONTROLLER_PROFILE
     timeout_s: float = 1.0
-    settings_refresh_interval_s: float = 10.0
 
 
 class DummyHeaterProvider:
@@ -187,13 +187,23 @@ class SerialHeaterProvider:
         self._parser = FrameParser(checksum_byteorder=config.profile.checksum_byteorder)
         self._snapshot = HeaterSnapshot(connected=False)
         self._health = TransportHealth(connected=False, profile_name=config.profile.name)
-        self._next_settings_refresh_monotonic = 0.0
 
     def connect(self) -> None:
         if self._stream is None:
             self._stream = SerialByteStream(self._config.device, self._config.profile.baudrate)
         self._establish_session()
         self.refresh()
+
+    def _mark_disconnected(self) -> None:
+        if self._stream is not None:
+            try:
+                self._stream.close()
+            except Exception:
+                LOG.debug("ignoring stream close failure during disconnect", exc_info=True)
+            self._stream = None
+        self._parser = FrameParser(checksum_byteorder=self._config.profile.checksum_byteorder)
+        self._health.connected = False
+        self._snapshot.connected = False
 
     def _establish_session(self) -> None:
         assert self._stream is not None
@@ -204,11 +214,7 @@ class SerialHeaterProvider:
         self._snapshot.connected = True
 
     def close(self) -> None:
-        if self._stream is not None:
-            self._stream.close()
-            self._stream = None
-        self._health.connected = False
-        self._snapshot.connected = False
+        self._mark_disconnected()
 
     def get_snapshot(self) -> HeaterSnapshot:
         return self._snapshot
@@ -218,16 +224,40 @@ class SerialHeaterProvider:
 
     def _exchange(self, frame: Frame, expect_response: bool = True) -> Frame | None:
         assert self._stream is not None
-        self._stream.write(encode_frame(frame, checksum_byteorder=self._config.profile.checksum_byteorder))
+        try:
+            self._stream.write(encode_frame(frame, checksum_byteorder=self._config.profile.checksum_byteorder))
+            LOG.debug("tx msg=0x%02x device=0x%02x payload=%s", frame.message_id2, frame.device, frame.payload.hex())
+        except (OSError, SerialException) as exc:
+            self._health.last_error = f"serial write failed for 0x{frame.message_id2:02x}: {exc}"
+            self._mark_disconnected()
+            raise TimeoutError(self._health.last_error) from exc
         if not expect_response:
             return None
         deadline = time.monotonic() + self._config.timeout_s
         while time.monotonic() < deadline:
-            data = self._stream.read(256, timeout=0.1)
+            try:
+                data = self._stream.read(256, timeout=0.1)
+            except (OSError, SerialException) as exc:
+                self._health.last_error = f"serial read failed for 0x{frame.message_id2:02x}: {exc}"
+                self._mark_disconnected()
+                raise TimeoutError(self._health.last_error) from exc
             if not data:
                 continue
-            for response in self._parser.feed(data):
+            LOG.debug("rx_raw %s", data.hex())
+            try:
+                responses = self._parser.feed(data)
+            except ProtocolError:
+                LOG.exception("parser rejected chunk: %s", data.hex())
+                continue
+            for response in responses:
+                LOG.debug(
+                    "rx_frame msg=0x%02x device=0x%02x payload=%s",
+                    response.message_id2,
+                    response.device,
+                    response.payload.hex(),
+                )
                 if self._matches_response(frame, response):
+                    LOG.debug("rx_match msg=0x%02x", response.message_id2)
                     return response
         self._health.last_error = f"timeout waiting for response to 0x{frame.message_id2:02x}"
         raise TimeoutError(self._health.last_error)
@@ -265,20 +295,8 @@ class SerialHeaterProvider:
                 self._establish_session()
             except (TimeoutError, ProtocolError) as exc:
                 LOG.warning("serial session establish failed; remaining disconnected: %s", exc)
-                self._health.connected = False
-                self._snapshot.connected = False
+                self._mark_disconnected()
                 return self._snapshot
-
-        now = time.monotonic()
-        if now >= self._next_settings_refresh_monotonic:
-            try:
-                settings_frame = self._exchange(build_get_settings_frame(self._config.profile.controller_device))
-                if settings_frame and settings_frame.message_id2 == MSG_SETTINGS:
-                    self._snapshot.settings = parse_settings_payload(settings_frame.payload)
-            except (TimeoutError, ProtocolError) as exc:
-                LOG.warning("settings refresh failed; keeping previous settings: %s", exc)
-            finally:
-                self._next_settings_refresh_monotonic = now + max(1.0, self._config.settings_refresh_interval_s)
         try:
             status_frame = self._exchange(build_status_request_frame(self._config.profile.controller_device))
             if status_frame:
@@ -290,8 +308,7 @@ class SerialHeaterProvider:
                 self._snapshot.connected = True
         except (TimeoutError, ProtocolError) as exc:
             LOG.warning("status refresh failed; keeping previous snapshot: %s", exc)
-            self._health.connected = False
-            self._snapshot.connected = False
+            self._mark_disconnected()
         return self._snapshot
 
     def start(self, settings: HeaterSettings) -> HeaterSnapshot:

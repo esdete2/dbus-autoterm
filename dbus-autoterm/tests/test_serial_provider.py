@@ -4,6 +4,7 @@ from emulator import FakeAir2DHeater
 from domain import HeaterPhase, HeaterSettings, OperatingMode
 from protocol import decode_frame, encode_frame
 from provider import SerialHeaterProvider, SerialProviderConfig
+from serial.serialutil import SerialException
 
 
 class LoopbackHeaterStream:
@@ -29,6 +30,17 @@ class LoopbackHeaterStream:
         self._buffer.clear()
 
 
+class FlakyLoopbackHeaterStream(LoopbackHeaterStream):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_writes = False
+
+    def write(self, data: bytes) -> int:
+        if self.fail_writes:
+            raise SerialException("device disconnected")
+        return super().write(data)
+
+
 class SerialProviderTests(unittest.TestCase):
     def test_provider_can_drive_emulator(self):
         stream = LoopbackHeaterStream()
@@ -50,6 +62,24 @@ class SerialProviderTests(unittest.TestCase):
 
         snapshot = provider.stop()
         self.assertEqual(snapshot.phase, HeaterPhase.SHUTTING_DOWN)
+
+    def test_provider_marks_disconnected_on_serial_failure_and_recovers(self):
+        stream = FlakyLoopbackHeaterStream()
+        provider = SerialHeaterProvider(SerialProviderConfig(device="loopback"), stream=stream)
+        provider.connect()
+
+        provider._parser.feed(b"\xaa\x04")
+        stream.fail_writes = True
+        snapshot = provider.refresh()
+        self.assertFalse(snapshot.connected)
+        self.assertFalse(provider.get_health().connected)
+        self.assertIsNone(provider._stream)
+
+        stream.fail_writes = False
+        provider._stream = stream
+        snapshot = provider.refresh()
+        self.assertTrue(snapshot.connected)
+        self.assertTrue(provider.get_health().connected)
 
 
 if __name__ == "__main__":

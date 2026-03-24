@@ -9,6 +9,8 @@ SAMPLE_CONFIG="$SCRIPT_DIR/config.sample.ini"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 RC_LOCAL="/data/rc.local"
 INSTALL_LINE="bash $SCRIPT_DIR/install.sh"
+SERIAL_STARTER_RULES="/etc/udev/rules.d/serial-starter.rules"
+SERIAL_STARTER_RULE='ACTION=="add", SUBSYSTEM=="tty", SUBSYSTEMS=="platform|usb-serial", ENV{ID_BUS}=="usb", ENV{ID_MODEL}=="Autoterm_UART", ENV{VE_SERVICE}="ignore", SYMLINK+="ttyAUTOTERM"'
 
 remount_root() {
     mount -o "remount,$1" / >/dev/null 2>&1 || true
@@ -38,6 +40,13 @@ fi
 remount_root rw
 rm -f "$SERVICE_LINK"
 ln -s "$SCRIPT_DIR/service" "$SERVICE_LINK"
+if [ -f "$SERIAL_STARTER_RULES" ]; then
+    if ! grep -qxF "$SERIAL_STARTER_RULE" "$SERIAL_STARTER_RULES"; then
+        echo "$SERIAL_STARTER_RULE" >> "$SERIAL_STARTER_RULES"
+        echo "Added Autoterm serial-starter ignore rule; reboot or replug the adapter if it is already attached."
+    fi
+    udevadm control --reload || true
+fi
 # Re-run install on boot so the service link is recreated after Venus OS maintenance or image changes.
 grep -qxF "$INSTALL_LINE" "$RC_LOCAL" || echo "$INSTALL_LINE" >> "$RC_LOCAL"
 remount_root ro
