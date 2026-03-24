@@ -29,7 +29,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fan-rpm-actual", type=int, default=0)
     parser.add_argument("--fuel-pump-frequency", type=float, default=0.0)
     parser.add_argument("--response-delay", type=float, default=0.02)
-    parser.add_argument("--status-broadcast-interval", type=float, default=1.0)
+    parser.add_argument(
+        "--status-broadcast-interval",
+        type=float,
+        default=0.0,
+        help="seconds between unsolicited status broadcasts; 0 disables them",
+    )
     parser.add_argument("--startup-sequence-required", action="store_true", default=True)
     parser.add_argument("--no-startup-sequence-required", dest="startup_sequence_required", action="store_false")
     parser.add_argument("--status-code", default=None, help="override initial status code, for example 2.3")
