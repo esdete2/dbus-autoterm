@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,19 +82,36 @@ def _prime_vedbus_import_path() -> None:
 def build_vedbus_service(service_name: str):
     _prime_vedbus_import_path()
     try:
+        import dbus
         from vedbus import VeDbusService
-
-        return VeDbusService(service_name, register=False)
     except Exception as exc:
         raise RuntimeError("VeDbusService is not available. Provide velib_python under ext/velib_python.") from exc
+
+    try:
+        if "DBUS_SESSION_BUS_ADDRESS" in os.environ:
+            try:
+                bus = dbus.SessionBus(private=True)
+            except TypeError:
+                bus = dbus.SessionBus()
+        else:
+            try:
+                bus = dbus.SystemBus(private=True)
+            except TypeError:
+                bus = dbus.SystemBus()
+        return VeDbusService(service_name, bus=bus, register=False)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to create VeDbusService for {service_name}: {exc}") from exc
 
 
 @dataclass
 class DriverConfig:
     service_name: str = "com.victronenergy.genset.autoterm_air2d"
+    startstop_service_name: str = "com.victronenergy.generator.startstop1"
     device_instance: int = 287
+    startstop_device_instance: int = 1
     product_id: int = 0xC06B
     product_name: str = "Autoterm Integration for Victron GX"
+    startstop_product_name: str = "Generator start/stop"
     firmware_version: str = "0.1.0"
     hardware_version: str = "AIR2D"
     connection: str = "UART"
@@ -105,16 +123,22 @@ class GeneratorDbusAdapter:
         self,
         config: DriverConfig | None = None,
         service=None,
+        startstop_service=None,
         on_startstop: Callable[[bool], bool] | None = None,
     ) -> None:
         self.config = config or DriverConfig()
         self.service = service or build_vedbus_service(self.config.service_name)
+        self.startstop_service = startstop_service or build_vedbus_service(self.config.startstop_service_name)
         self._on_startstop = on_startstop
         self._on_mode_change: Callable[[int], bool] | None = None
         self._on_target_temperature_change: Callable[[int], bool] | None = None
         self._on_power_level_change: Callable[[int], bool] | None = None
         self._auto_start_enabled = 0
+        self._manual_start_requested = 0
+        self._manual_running_latch = 0
+        self._manual_start_timer = 0
         self._init_service()
+        self._init_startstop_service()
 
     def _init_service(self) -> None:
         self.service.add_mandatory_paths(
@@ -167,11 +191,59 @@ class GeneratorDbusAdapter:
         )
         self.service.register()
 
+    def _init_startstop_service(self) -> None:
+        self.startstop_service.add_mandatory_paths(
+            processname=__file__,
+            processversion=self.config.firmware_version,
+            connection="generator",
+            deviceinstance=self.config.startstop_device_instance,
+            productid=0,
+            productname=self.config.startstop_product_name,
+            firmwareversion=self.config.firmware_version,
+            hardwareversion=self.config.hardware_version,
+            connected=1,
+        )
+        self.startstop_service.add_path("/Enabled", 1)
+        self.startstop_service.add_path(
+            "/AutoStartEnabled",
+            0,
+            writeable=True,
+            onchangecallback=self._handle_autostart_enabled,
+        )
+        self.startstop_service.add_path(
+            "/ManualStart",
+            0,
+            writeable=True,
+            onchangecallback=self._handle_manual_start,
+        )
+        self.startstop_service.add_path(
+            "/ManualStartTimer",
+            0,
+            writeable=True,
+            onchangecallback=self._handle_manual_start_timer,
+        )
+        self.startstop_service.add_path("/State", 0)
+        self.startstop_service.add_path("/RunningByConditionCode", 0)
+        self.startstop_service.add_path("/Runtime", 0)
+        self.startstop_service.add_path("/Error", 0)
+        self.startstop_service.add_path("/GensetInstance", self.config.device_instance)
+        self.startstop_service.add_path("/GensetService", self.config.service_name)
+        self.startstop_service.add_path("/GensetServiceType", "genset")
+        self.startstop_service.add_path("/Capabilities", 0)
+        self.startstop_service.add_path("/Type", 1)
+        self.startstop_service.register()
+
     def _handle_startstop(self, path: str, value: object) -> bool:
         del path
         if self._on_startstop is None:
             return False
-        return self._on_startstop(bool(value))
+        enabled = bool(value)
+        if not self._on_startstop(enabled):
+            return False
+        self._manual_start_requested = 1 if enabled else 0
+        if enabled:
+            self._manual_running_latch = 1
+        return True
 
     def _handle_mode_change(self, path: str, value: object) -> bool:
         del path
@@ -190,6 +262,28 @@ class GeneratorDbusAdapter:
         if self._on_power_level_change is None:
             return False
         return self._on_power_level_change(int(value))
+
+    def _handle_autostart_enabled(self, path: str, value: object) -> bool:
+        del path
+        self._auto_start_enabled = 1 if bool(value) else 0
+        return True
+
+    def _handle_manual_start_timer(self, path: str, value: object) -> bool:
+        del path
+        self._manual_start_timer = max(0, int(value))
+        return True
+
+    def _handle_manual_start(self, path: str, value: object) -> bool:
+        del path
+        if self._on_startstop is None:
+            return False
+        enabled = bool(value)
+        if not self._on_startstop(enabled):
+            return False
+        self._manual_start_requested = 1 if enabled else 0
+        if enabled:
+            self._manual_running_latch = 1
+        return True
 
     def _genset_status_code(self, snapshot: HeaterSnapshot, is_connected: bool) -> int:
         if not is_connected or snapshot.telemetry.error_code:
@@ -213,12 +307,12 @@ class GeneratorDbusAdapter:
             return 2
         if snapshot.phase == HeaterPhase.RUNNING:
             return 1
-        return 4
+        return 3
 
-    def _running_by_condition(self, snapshot: HeaterSnapshot) -> int:
-        if snapshot.phase == HeaterPhase.OFF:
+    def _running_by_condition(self, snapshot: HeaterSnapshot, is_connected: bool) -> int:
+        if not is_connected or snapshot.telemetry.error_code or snapshot.phase == HeaterPhase.OFF:
             return 0
-        return 1 if snapshot.phase in {HeaterPhase.STARTING, HeaterPhase.WARMING_UP, HeaterPhase.RUNNING} else 0
+        return 1 if self._manual_running_latch else 0
 
     def _ac_metrics(self, snapshot: HeaterSnapshot) -> tuple[float, float, int]:
         if snapshot.phase not in {HeaterPhase.STARTING, HeaterPhase.WARMING_UP, HeaterPhase.RUNNING, HeaterPhase.SHUTTING_DOWN}:
@@ -237,11 +331,15 @@ class GeneratorDbusAdapter:
 
     def publish_snapshot(self, snapshot: HeaterSnapshot, connected: bool) -> None:
         is_connected = bool(connected and snapshot.connected)
+        if snapshot.phase == HeaterPhase.OFF:
+            self._manual_running_latch = 0
         genset_status_code = self._genset_status_code(snapshot, is_connected)
         ac_voltage, ac_current, ac_power = self._ac_metrics(snapshot)
+        generator_state = self._generator_state(snapshot, is_connected)
+        running_by_condition = self._running_by_condition(snapshot, is_connected)
 
         self.service["/Connected"] = 1 if is_connected else 0
-        self.service["/State"] = int(snapshot.phase)
+        self.service["/State"] = generator_state
         self.service["/StatusCode"] = genset_status_code
         self.service["/StatusCodeMajor"] = snapshot.telemetry.status_code_major
         self.service["/StatusCodeMinor"] = snapshot.telemetry.status_code_minor
@@ -264,3 +362,11 @@ class GeneratorDbusAdapter:
         self.service["/Settings/Mode"] = int(snapshot.settings.mode)
         self.service["/Settings/TargetTemperature"] = snapshot.settings.setpoint_c
         self.service["/Settings/PowerLevel"] = snapshot.settings.power_level
+        self.startstop_service["/Connected"] = 1 if is_connected else 0
+        self.startstop_service["/AutoStartEnabled"] = self._auto_start_enabled
+        self.startstop_service["/ManualStart"] = self._manual_start_requested
+        self.startstop_service["/ManualStartTimer"] = self._manual_start_timer
+        self.startstop_service["/State"] = generator_state
+        self.startstop_service["/RunningByConditionCode"] = running_by_condition
+        self.startstop_service["/Runtime"] = snapshot.runtime_seconds
+        self.startstop_service["/Error"] = snapshot.telemetry.error_code if snapshot.telemetry.error_code else (1 if not is_connected else 0)

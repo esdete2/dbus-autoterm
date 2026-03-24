@@ -10,6 +10,7 @@ For real serial testing on a Cerbo GX, the important operational detail is that 
 - Default backend is `dummy`, so the plugin can be installed and tested on a Cerbo GX without heater hardware.
 - Runtime is direct Python execution via `python3 app.py`; Cerbo installation does not depend on `pip install -e`, PyPI, or internet access.
 - `velib_python` is bundled under `ext/velib_python`.
+- The existing genset telemetry service is paired with a `com.victronenergy.generator.startstop1` shim so the stock Venus genset page can drive manual start/stop and autostart without patching `venus-gui-v2`.
 - The future `serial` backend remains in the tree for later hardware integration, but it is not part of the default install path.
 - Serial unplug/replug recovery is implemented in the provider so the service can recover when the tty disappears and later returns.
 
@@ -19,7 +20,13 @@ For real serial testing on a Cerbo GX, the important operational detail is that 
 - Config path: `/data/apps/dbus-autoterm/config.ini`
 - Service path: `/service/dbus-autoterm`
 - D-Bus service: `com.victronenergy.genset.autoterm_air2d`
+- UI control shim: `com.victronenergy.generator.startstop1`
 - Service entrypoint: `python3 app.py -c /data/apps/dbus-autoterm/config.ini`
+
+The stock Venus genset pages use the two services differently:
+
+- `com.victronenergy.genset.autoterm_air2d` remains the primary telemetry source for status, runtime, AC-style power placeholders, voltage, and writable heater settings.
+- `com.victronenergy.generator.startstop1` exposes the generator-style `/ManualStart`, `/ManualStartTimer`, `/AutoStartEnabled`, `/State`, and `/RunningByConditionCode` paths expected by the Venus manual-control UI.
 
 ## Cerbo serial setup
 

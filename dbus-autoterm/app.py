@@ -205,7 +205,14 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         LOG.exception("initial provider connect failed; continuing in disconnected mode")
     service = MockVeDbusService(runtime.driver_config.service_name) if runtime.mock_dbus else None
-    dbus_adapter = GeneratorDbusAdapter(config=runtime.driver_config, service=service)
+    startstop_service = (
+        MockVeDbusService(runtime.driver_config.startstop_service_name) if runtime.mock_dbus else None
+    )
+    dbus_adapter = GeneratorDbusAdapter(
+        config=runtime.driver_config,
+        service=service,
+        startstop_service=startstop_service,
+    )
     app = HeaterDriverApp(provider, dbus_adapter)
 
     # Wire writable D-Bus paths to provider-backed state transitions.
