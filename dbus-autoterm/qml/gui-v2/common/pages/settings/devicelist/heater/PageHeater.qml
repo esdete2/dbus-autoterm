@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Templates as T
 import Victron.VenusOS
 
 DevicePage {
@@ -6,20 +7,88 @@ DevicePage {
 
 	required property string bindPrefix
 	serviceUid: bindPrefix
+	readonly property bool isRunning: heaterState.valid && heaterState.value !== 0 && heaterState.value !== 10
+	readonly property bool isVentilationMode: mode.valid && mode.value === 2
+	readonly property bool showTemperatureControl: mode.valid && (mode.value === 1 || mode.value === 3)
+	readonly property bool showPowerControl: mode.valid && (mode.value === 0 || mode.value === 2)
+	readonly property string warningTitle: communicationAlarm.valid && communicationAlarm.value !== 0
+		? "Communication problem"
+		: (errorText.valid && errorText.value !== "" ? "Heater fault" : "")
+	readonly property string warningText: communicationAlarm.valid && communicationAlarm.value !== 0
+		? "The Cerbo cannot communicate with the heater."
+		: (errorText.valid ? errorText.value : "")
+	readonly property string actionLabel: isRunning
+		? (isVentilationMode ? "Stop ventilation" : "Stop heater")
+		: (isVentilationMode ? "Start ventilation" : "Start heater")
+	readonly property string actionDescription: isRunning
+		? (isVentilationMode
+			? "The heater will stop ventilation mode."
+			: "The heater will begin its shutdown cycle.")
+		: (isVentilationMode
+			? "The heater will start in ventilation mode."
+			: "The heater will start heating with the current settings.")
 
 	showSwitches: false
+	settingsHeader: Item {
+		width: root.width
+		implicitHeight: warningBanner.visible ? warningBanner.implicitHeight + Theme.geometry_gradientList_spacing : 0
+
+		Rectangle {
+			id: warningBanner
+			visible: root.warningText.length > 0
+			width: parent.width - (Theme.geometry_page_content_horizontalMargin * 2)
+			x: Theme.geometry_page_content_horizontalMargin
+			y: Theme.geometry_gradientList_spacing
+			radius: Theme.geometry_listItem_radius
+			color: Theme.color_toastNotification_background_warning
+			implicitHeight: bannerContent.implicitHeight + (Theme.geometry_listItem_content_verticalMargin * 2)
+
+			Column {
+				id: bannerContent
+				width: parent.width - (Theme.geometry_listItem_content_horizontalMargin * 2)
+				x: Theme.geometry_listItem_content_horizontalMargin
+				y: Theme.geometry_listItem_content_verticalMargin
+				spacing: Theme.geometry_listItem_content_verticalMargin / 2
+
+				Label {
+					width: parent.width
+					text: root.warningTitle
+					font.pixelSize: Theme.font_size_body2
+					font.bold: true
+					color: Theme.color_font_primary
+					wrapMode: Text.Wrap
+				}
+
+				Label {
+					width: parent.width
+					text: root.warningText
+					font.pixelSize: Theme.font_size_body1
+					color: Theme.color_font_primary
+					wrapMode: Text.Wrap
+				}
+			}
+		}
+	}
 
 	settingsModel: VisibleItemModel {
 		ListText {
-			text: CommonWords.state
-			dataItem.uid: root.bindPrefix + "/StateText"
-			secondaryText: dataItem.valid ? dataItem.value : CommonWords.not_connected
+			text: "State"
+			dataItem.uid: root.bindPrefix + "/State"
+			secondaryText: dataItem.valid ? root.stateLabel(dataItem.value) : "Not connected"
 		}
 
-		ListText {
-			text: CommonWords.mode
-			dataItem.uid: root.bindPrefix + "/ModeText"
-			secondaryText: dataItem.valid ? dataItem.value : ""
+		ListButton {
+			text: "Heater control"
+			secondaryText: root.actionLabel
+			interactive: startStop.valid
+			onClicked: Global.dialogLayer.open(startStopDialogComponent, {
+				startRequested: !root.isRunning,
+			})
+
+			VeQuickItem {
+				id: startStop
+				uid: root.bindPrefix + "/StartStop"
+			}
 		}
 
 		ListText {
@@ -28,27 +97,8 @@ DevicePage {
 			secondaryText: dataItem.valid ? Utils.secondsToString(dataItem.value, false) : "0"
 		}
 
-		ListText {
-			text: CommonWords.error
-			dataItem.uid: root.bindPrefix + "/ErrorText"
-			preferredVisible: dataItem.valid && dataItem.value !== ""
-			secondaryText: dataItem.valid ? dataItem.value : ""
-		}
-
-		ListButton {
-			text: startStop.valid && startStop.value ? "Stop heater" : "Start heater"
-			secondaryText: startStop.valid && startStop.value ? "Running" : "Idle"
-			interactive: startStop.valid
-			onClicked: startStop.setValue(startStop.value ? 0 : 1)
-
-			VeQuickItem {
-				id: startStop
-				uid: root.bindPrefix + "/StartStop"
-			}
-		}
-
 		ListRadioButtonGroup {
-			text: CommonWords.mode
+			text: "Mode"
 			dataItem.uid: root.bindPrefix + "/Mode"
 			optionModel: [
 				{ display: "Power", value: 0 },
@@ -59,29 +109,29 @@ DevicePage {
 		}
 
 		ListSpinBox {
-			text: CommonWords.temperature
+			text: "Temperature"
 			dataItem.uid: root.bindPrefix + "/Settings/TargetTemperature"
-			preferredVisible: mode.valid && mode.value !== 0 && mode.value !== 2
+			preferredVisible: root.showTemperatureControl
 			suffix: Units.defaultUnitString(Global.systemSettings.temperatureUnit)
 			from: 5
 			to: 35
 			stepSize: 1
 		}
 
-		ListSpinBox {
+		ListSlider {
 			text: "Power level"
 			dataItem.uid: root.bindPrefix + "/Settings/PowerLevel"
-			from: 1
-			to: 9
-			stepSize: 1
+			preferredVisible: root.showPowerControl
+			slider.from: 1
+			slider.to: 9
+			slider.stepSize: 1
 		}
 
 		ListQuantityGroup {
 			text: "Live values"
 			model: QuantityObjectModel {
 				QuantityObject { object: controlTemperature; unit: Global.systemSettings.temperatureUnit }
-				QuantityObject { object: batteryVoltage; unit: VenusOS.Units_Volt_DC }
-				QuantityObject { object: fanRpmActual; unit: VenusOS.Units_None }
+				QuantityObject { object: heaterTemperature; unit: Global.systemSettings.temperatureUnit }
 			}
 
 			VeQuickItem {
@@ -90,21 +140,9 @@ DevicePage {
 			}
 
 			VeQuickItem {
-				id: batteryVoltage
-				uid: root.bindPrefix + "/Dc/0/Voltage"
+				id: heaterTemperature
+				uid: root.bindPrefix + "/Temperatures/Heater"
 			}
-
-			VeQuickItem {
-				id: fanRpmActual
-				uid: root.bindPrefix + "/Status/FanRpmActual"
-			}
-		}
-
-		ListNavigation {
-			text: "Timers"
-			onClicked: Global.pageManager.pushPage("/pages/settings/devicelist/heater/PageHeaterTimers.qml", {
-				bindPrefix: root.bindPrefix,
-			})
 		}
 
 		ListNavigation {
@@ -132,5 +170,57 @@ DevicePage {
 	VeQuickItem {
 		id: mode
 		uid: root.bindPrefix + "/Mode"
+	}
+
+	VeQuickItem {
+		id: heaterState
+		uid: root.bindPrefix + "/State"
+	}
+
+	VeQuickItem {
+		id: errorText
+		uid: root.bindPrefix + "/ErrorText"
+	}
+
+	VeQuickItem {
+		id: communicationAlarm
+		uid: root.bindPrefix + "/Alarms/Communication"
+	}
+
+	Component {
+		id: startStopDialogComponent
+
+		ModalWarningDialog {
+			required property bool startRequested
+
+			title: root.actionLabel + "?"
+			description: root.actionDescription
+			dialogDoneOptions: VenusOS.ModalDialog_DoneOptions_OkAndCancel
+			acceptText: root.actionLabel
+			onClosed: {
+				if (result === T.Dialog.Accepted) {
+					startStop.setValue(startRequested ? 1 : 0)
+				}
+			}
+		}
+	}
+
+	function stateLabel(value) {
+		switch (value) {
+		case 0:
+			return "Off"
+		case 1:
+			return "Starting"
+		case 2:
+			return "Warming up"
+		case 3:
+			return "Running"
+		case 4:
+			return "Shutting down"
+		case 10:
+			return "Error"
+		default:
+			return "Not connected"
+		}
 	}
 }

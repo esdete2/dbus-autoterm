@@ -4,14 +4,17 @@ import Victron.VenusOS
 DeviceListDelegate {
 	id: root
 
-	secondaryText: !controlTemperature.valid && !batteryVoltage.valid && stateText.valid
-		? stateText.value
-		: (stateText.valid ? "" : CommonWords.not_connected)
+	secondaryText: communicationAlarm.valid && communicationAlarm.value !== 0
+		? "Communication problem"
+		: (errorText.valid && errorText.value !== ""
+			? errorText.value
+			: (!controlTemperature.valid
+				? stateLabel(heaterState.value)
+				: ""))
 	quantityModel: QuantityObjectModel {
 		filterType: QuantityObjectModel.HasValue
 
 		QuantityObject { object: controlTemperature; unit: Global.systemSettings.temperatureUnit }
-		QuantityObject { object: batteryVoltage; unit: VenusOS.Units_Volt_DC }
 	}
 
 	onClicked: {
@@ -21,8 +24,8 @@ DeviceListDelegate {
 	}
 
 	VeQuickItem {
-		id: stateText
-		uid: root.device.serviceUid + "/StateText"
+		id: heaterState
+		uid: root.device.serviceUid + "/State"
 	}
 
 	VeQuickItem {
@@ -31,7 +34,31 @@ DeviceListDelegate {
 	}
 
 	VeQuickItem {
-		id: batteryVoltage
-		uid: root.device.serviceUid + "/Dc/0/Voltage"
+		id: errorText
+		uid: root.device.serviceUid + "/ErrorText"
+	}
+
+	VeQuickItem {
+		id: communicationAlarm
+		uid: root.device.serviceUid + "/Alarms/Communication"
+	}
+
+	function stateLabel(value) {
+		switch (value) {
+		case 0:
+			return "Off"
+		case 1:
+			return "Starting"
+		case 2:
+			return "Warming up"
+		case 3:
+			return "Running"
+		case 4:
+			return "Shutting down"
+		case 10:
+			return "Error"
+		default:
+			return "Not connected"
+		}
 	}
 }
