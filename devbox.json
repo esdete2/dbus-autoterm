@@ -35,7 +35,8 @@
 
       "test": ["devbox run emulation:test", "devbox run dbus-autoterm:test"],
       "check": ["devbox run emulation:check", "devbox run dbus-autoterm:check"],
-      "package": ["make package"]
+      "package": ["make package"],
+      "deploy": ["make deploy"]
     }
   }
 }

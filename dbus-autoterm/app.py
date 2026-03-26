@@ -10,6 +10,7 @@ from pathlib import Path
 from domain import HeaterPhase, OperatingMode
 from gx_dbus import DriverConfig, HeaterDbusAdapter, HeaterUiMode, MockVeDbusService
 from provider import DummyHeaterProvider, SerialHeaterProvider, SerialProviderConfig
+from room_sensor import DbusRoomTemperatureReader, NullRoomTemperatureReader
 
 LOG = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ LOG = logging.getLogger(__name__)
 class RuntimeConfig:
     backend: str = "dummy"
     serial_device: str | None = None
+    room_temperature_service: str = "auto"
     poll_interval: float = 1.0
     log_level: str = "INFO"
     mock_dbus: bool = False
@@ -25,9 +27,17 @@ class RuntimeConfig:
 
 
 class HeaterDriverApp:
-    def __init__(self, provider, dbus_adapter: HeaterDbusAdapter) -> None:
+    def __init__(
+        self,
+        provider,
+        dbus_adapter: HeaterDbusAdapter,
+        room_temperature_reader=None,
+        config_path: Path | None = None,
+    ) -> None:
         self.provider = provider
         self.dbus_adapter = dbus_adapter
+        self.room_temperature_reader = room_temperature_reader or NullRoomTemperatureReader()
+        self.config_path = config_path
 
     def startstop(self, enabled: bool) -> bool:
         if enabled:
@@ -42,7 +52,12 @@ class HeaterDriverApp:
 
     def run_once(self) -> None:
         snapshot = self.provider.refresh()
-        self.dbus_adapter.publish_snapshot(snapshot, self.provider.get_health().connected)
+        room_temperature = self.room_temperature_reader.refresh()
+        self.dbus_adapter.publish_snapshot(snapshot, self.provider.get_health().connected, room_temperature)
+        self.dbus_adapter.publish_room_temperature_services(
+            self.room_temperature_reader.available_services(),
+            self.room_temperature_reader.selected_service,
+        )
 
     def poll(self) -> bool:
         self.run_once()
@@ -57,6 +72,13 @@ class HeaterDriverApp:
     def update_power_level(self, power_level: int) -> bool:
         return self._update_settings(power_level=int(power_level))
 
+    def update_room_temperature_service(self, service_name: str) -> bool:
+        normalized = service_name or "auto"
+        self.room_temperature_reader.set_selected_service(normalized)
+        self._persist_room_temperature_service(normalized)
+        self.run_once()
+        return True
+
     def _update_settings(self, **changes) -> bool:
         current_snapshot = self.provider.get_snapshot()
         settings = replace(current_snapshot.settings, **changes)
@@ -68,6 +90,19 @@ class HeaterDriverApp:
             snapshot = self.provider.update_settings(settings)
         self.dbus_adapter.publish_snapshot(snapshot, self.provider.get_health().connected)
         return True
+
+    def _persist_room_temperature_service(self, service_name: str) -> None:
+        if self.config_path is None:
+            return
+        config = ConfigParser()
+        if self.config_path.exists():
+            with self.config_path.open("r", encoding="utf-8") as handle:
+                config.read_file(handle)
+        if not config.has_section("driver"):
+            config.add_section("driver")
+        config.set("driver", "room_temperature_service", service_name)
+        with self.config_path.open("w", encoding="utf-8") as handle:
+            config.write(handle)
 
 
 def _load_config(path: Path | None) -> ConfigParser | None:
@@ -110,6 +145,11 @@ def _build_runtime_config(args: argparse.Namespace, arg_list: list[str], config:
         if args.serial_device is not None
         else _config_get(config, "driver", "serial_device", None)
     )
+    room_temperature_service = (
+        args.room_temperature_service
+        if "--room-temperature-service" in arg_list and args.room_temperature_service is not None
+        else _config_get(config, "driver", "room_temperature_service", "auto")
+    )
     poll_interval = (
         args.poll_interval
         if "--poll-interval" in arg_list
@@ -138,6 +178,7 @@ def _build_runtime_config(args: argparse.Namespace, arg_list: list[str], config:
     return RuntimeConfig(
         backend=backend,
         serial_device=serial_device,
+        room_temperature_service=room_temperature_service,
         poll_interval=poll_interval,
         log_level=log_level,
         mock_dbus=mock_dbus,
@@ -184,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-c", "--config", type=Path, help="configuration file")
     parser.add_argument("--backend", choices=["dummy", "serial"], default="dummy")
     parser.add_argument("--serial-device")
+    parser.add_argument("--room-temperature-service")
     parser.add_argument("--poll-interval", type=float, default=1.0)
     parser.add_argument("--service-name")
     parser.add_argument("--device-instance", type=int)
@@ -218,13 +260,23 @@ def main(argv: list[str] | None = None) -> int:
         config=runtime.driver_config,
         service=service,
     )
-    app = HeaterDriverApp(provider, dbus_adapter)
+    if runtime.mock_dbus:
+        room_temperature_reader = NullRoomTemperatureReader()
+    else:
+        room_temperature_reader = DbusRoomTemperatureReader(selected_service=runtime.room_temperature_service)
+    app = HeaterDriverApp(
+        provider,
+        dbus_adapter,
+        room_temperature_reader=room_temperature_reader,
+        config_path=args.config,
+    )
 
     # Wire writable D-Bus paths to provider-backed state transitions.
     dbus_adapter._on_startstop = app.startstop
     dbus_adapter._on_mode_change = app.update_mode
     dbus_adapter._on_target_temperature_change = app.update_target_temperature
     dbus_adapter._on_power_level_change = app.update_power_level
+    dbus_adapter._on_room_temperature_service_change = app.update_room_temperature_service
 
     try:
         try:

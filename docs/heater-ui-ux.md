@@ -25,6 +25,8 @@ This document is intentionally staged:
 - The repeated Device Info footer on every heater page is a UX bug caused by using `DevicePage` for subpages and should be removed.
 - D-Bus helper objects such as `VeQuickItem` must stay at page scope, not inside `VisibleItemModel`.
 - Unsupported or unavailable functions should be hidden or clearly staged, not shown as broken controls.
+- Heater temperature is telemetry, not room temperature.
+- Temperature-regulated modes require a real room sensor and must be hidden when no such source is available.
 
 ## User Needs
 
@@ -42,7 +44,7 @@ The daily operator needs to:
 
 The user needs to:
 
-- check control temperature and heater temperature
+- check room temperature and heater temperature
 - confirm battery voltage is healthy
 - see runtime while active
 - inspect fan and fuel-pump-related live values when debugging or validating behavior
@@ -60,7 +62,7 @@ The user needs to:
 
 The user needs to:
 
-- choose the relevant sensor source
+- verify whether a room-temperature source is actually available
 - verify that the heater behaves according to the installation layout
 - adjust basic operating defaults where supported
 
@@ -70,12 +72,9 @@ The user needs to:
 
 - Start / stop heater
 - Power mode
-- Temperature mode
 - Ventilation mode
-- Heat + ventilation mode
-- Sensor source selection
 - Live status and diagnostics
-- Timer information architecture and editable timer placeholders
+- Heater settings/status page that reports room-temperature-source availability
 
 ### Next
 
@@ -83,6 +82,7 @@ The user needs to:
 - Cleaner status presentation and action wording
 - Better live-data labeling and condensed root-page summaries
 - Smarter visibility rules for controls based on connection, fault, and phase
+- Temperature mode and Heat + ventilation mode, but only once a real room-sensor path is implemented and validated
 
 ### Later
 
@@ -110,7 +110,7 @@ Content:
   - fault text when faulted
   - not connected text when disconnected
 - quantity row:
-  - `control temperature`
+  - `room temperature`, when available
 
 Component mapping:
 
@@ -118,7 +118,7 @@ Component mapping:
 - `QuantityObjectModel`
 - `VeQuickItem` for:
   - `/StateText`
-  - `/Temperatures/Control`
+  - `/Temperatures/Room`
 
 Rules:
 
@@ -159,12 +159,12 @@ Order and component mapping:
    - source: `/Mode`
 6. `ListSpinBox`: Target temperature
    - source: `/Settings/TargetTemperature`
-   - visible only in temperature-like modes
+   - visible only when room-temperature control is available and a temperature-regulated mode is active
 7. `ListRangeSlider`: Power level
    - source: `/Settings/PowerLevel`
    - visible only in power and ventilation-oriented modes
 8. `ListQuantityGroup`: Live values
-   - `control temperature`
+   - `room temperature`, when available
    - `heater temperature`
 9. `ListNavigation`: Live Data
 10. `ListNavigation`: Diagnostics
@@ -177,6 +177,7 @@ Root-page behavior:
 - The page must not rely on `/StartStop` alone to describe current run state.
 - Actual state comes from `/State` and `/StateText`.
 - The separate informational `Mode` row is intentionally omitted from the main page because the selector already communicates and controls mode.
+- If no room sensor is available, only `Power` and `Ventilation` should appear in the mode selector.
 - The primary action label should reflect the current mode:
   - `Start` / `Stop`
   - `Start ventilation` / `Stop ventilation`
@@ -277,7 +278,7 @@ Purpose:
 
 Component mapping:
 
-- `ListTemperature`: control temperature
+- `ListTemperature`: room temperature
 - `ListTemperature`: internal temperature
 - `ListTemperature`: heater temperature
 - `ListQuantity`: battery voltage
@@ -287,7 +288,7 @@ Component mapping:
 
 Data sources:
 
-- `/Temperatures/Control`
+- `/Temperatures/Room`
 - `/Temperatures/Internal`
 - `/Temperatures/Heater`
 - `/Dc/0/Voltage`
@@ -314,6 +315,8 @@ Component mapping:
 - `ListText`: heater error code
 - `ListText`: heater error text
 - `ListText`: communication alarm
+- `ListText`: room temperature source
+- `ListText`: temperature control available
 
 Data sources:
 
@@ -322,6 +325,8 @@ Data sources:
 - `/ErrorCode`
 - `/ErrorText`
 - `/Alarms/Communication`
+- `/Temperatures/RoomSourceText`
+- `/Capabilities/RoomTemperatureControl`
 
 ### Heater Settings Page
 
@@ -337,16 +342,13 @@ Purpose:
 
 Component mapping:
 
-- `ListRadioButtonGroup`: sensor source
-- `ListSpinBox`: target temperature, when meaningful
-- `ListRangeSlider`: power level, when meaningful
+- `ListText`: room temperature source
+- `ListText`: temperature control available
 
 Data sources:
 
-- `/Settings/SensorSource`
-- `/Settings/SensorSourceText`
-- `/Settings/TargetTemperature`
-- `/Settings/PowerLevel`
+- `/Temperatures/RoomSourceText`
+- `/Capabilities/RoomTemperatureControl`
 
 ## D-Bus Contract and UI Semantics
 
@@ -362,17 +364,20 @@ The heater UX depends on these D-Bus paths:
 - `/ErrorCode`
 - `/ErrorText`
 - `/Alarms/Communication`
+- `/Temperatures/Room`
+- `/Temperatures/RoomSource`
+- `/Temperatures/RoomSourceText`
 - `/Dc/0/Voltage`
 - `/Temperatures/Internal`
-- `/Temperatures/Control`
 - `/Temperatures/Heater`
+- `/Capabilities/RoomTemperatureControl`
+- `/Capabilities/ExternalRoomSensor`
+- `/Capabilities/CerboRoomSensor`
 - `/Status/FanRpmSet`
 - `/Status/FanRpmActual`
 - `/Status/FuelPumpFrequency`
 - `/Settings/TargetTemperature`
 - `/Settings/PowerLevel`
-- `/Settings/SensorSource`
-- `/Settings/SensorSourceText`
 - `/Timers/0..2/*`
 
 Semantics that the UI must follow:
@@ -380,18 +385,22 @@ Semantics that the UI must follow:
 - `/StartStop` is an action surface, not the sole state source.
 - Actual operating truth comes from `/State` and `/StateText`.
 - Cooldown, fault, and disconnect must remain visible even if `/StartStop` is already `0`.
+- Room temperature comes from a real room sensor only; controller/internal telemetry is not a substitute.
 - Unsupported controls must be hidden by invalid or missing D-Bus items, not rendered as dead controls.
 - Ventilation is a first-class user-visible mode and should not be presented as a hidden protocol quirk.
 - Battery voltage is monitoring data and belongs on Live Data, not in the root device-list summary.
-- Sensor source is a setup-time setting and belongs on Heater Settings, not the root page.
+- Temperature-regulated modes belong in the UI only when `/Capabilities/RoomTemperatureControl == 1`.
 
 ## Mode Model
 
 ### MVP modes
 
 - `Power`
-- `Temperature`
 - `Ventilation`
+
+### Next modes
+
+- `Temperature`
 - `Heat + ventilation`
 
 ### Later modes
@@ -403,11 +412,11 @@ Semantics that the UI must follow:
 
 ### Flow 1: Start heating to a target temperature
 
+This flow is `Next` until a real room sensor is wired and exposed to the driver.
+
 1. User opens `Devices`.
-2. User sees heater name, current control temperature, and battery voltage.
-2. User sees heater name, current control temperature, and current state.
+2. User sees heater name, current room temperature, when available, and current state.
 3. User opens the root heater page.
-4. User checks `State` and `Mode`.
 4. User checks `State`.
 5. User selects `Temperature` mode if needed.
 6. User sets the target temperature.
@@ -453,10 +462,9 @@ This flow is `Next` unless timer behavior is fully backed by the provider and va
 ### Flow 5: Installer/basic setup
 
 1. User opens `Heater Settings`.
-2. User selects the sensor source that matches the installation.
-3. User adjusts default target temperature or power if supported.
-4. User verifies the expected control behavior.
-5. User returns to the root page and tests start/stop.
+2. User checks whether room-temperature control is available.
+3. User verifies the reported room-temperature source matches the installation.
+4. User returns to the root page and tests start/stop.
 
 ## Validation and Acceptance
 

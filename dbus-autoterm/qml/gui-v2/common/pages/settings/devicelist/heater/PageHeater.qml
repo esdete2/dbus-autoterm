@@ -8,9 +8,21 @@ DevicePage {
 	required property string bindPrefix
 	serviceUid: bindPrefix
 	readonly property bool isRunning: heaterState.valid && heaterState.value !== 0 && heaterState.value !== 10
+	readonly property bool hasRoomTemperatureControl: roomTemperatureControl.valid && roomTemperatureControl.value === 1
 	readonly property bool isVentilationMode: mode.valid && mode.value === 2
-	readonly property bool showTemperatureControl: mode.valid && (mode.value === 1 || mode.value === 3)
+	readonly property bool showTemperatureControl: hasRoomTemperatureControl && mode.valid && (mode.value === 1 || mode.value === 3)
 	readonly property bool showPowerControl: mode.valid && (mode.value === 0 || mode.value === 2)
+	readonly property var modeOptions: hasRoomTemperatureControl
+		? [
+			{ display: "Power", value: 0 },
+			{ display: "Temperature", value: 1 },
+			{ display: "Ventilation", value: 2 },
+			{ display: "Heat + ventilation", value: 3 },
+		]
+		: [
+			{ display: "Power", value: 0 },
+			{ display: "Ventilation", value: 2 },
+		]
 	readonly property string warningTitle: communicationAlarm.valid && communicationAlarm.value !== 0
 		? "Communication problem"
 		: (errorText.valid && errorText.value !== "" ? "Heater fault" : "")
@@ -100,12 +112,13 @@ DevicePage {
 		ListRadioButtonGroup {
 			text: "Mode"
 			dataItem.uid: root.bindPrefix + "/Mode"
-			optionModel: [
-				{ display: "Power", value: 0 },
-				{ display: "Temperature", value: 1 },
-				{ display: "Ventilation", value: 2 },
-				{ display: "Heat + ventilation", value: 3 },
-			]
+			optionModel: root.modeOptions
+		}
+
+		ListText {
+			text: "Temperature control"
+			preferredVisible: !root.hasRoomTemperatureControl
+			secondaryText: "Unavailable: no room sensor"
 		}
 
 		ListSpinBox {
@@ -130,13 +143,13 @@ DevicePage {
 		ListQuantityGroup {
 			text: "Live values"
 			model: QuantityObjectModel {
-				QuantityObject { object: controlTemperature; unit: Global.systemSettings.temperatureUnit }
+				QuantityObject { object: roomTemperature; unit: Global.systemSettings.temperatureUnit }
 				QuantityObject { object: heaterTemperature; unit: Global.systemSettings.temperatureUnit }
 			}
 
 			VeQuickItem {
-				id: controlTemperature
-				uid: root.bindPrefix + "/Temperatures/Control"
+				id: roomTemperature
+				uid: root.bindPrefix + "/Temperatures/Room"
 			}
 
 			VeQuickItem {
@@ -185,6 +198,11 @@ DevicePage {
 	VeQuickItem {
 		id: communicationAlarm
 		uid: root.bindPrefix + "/Alarms/Communication"
+	}
+
+	VeQuickItem {
+		id: roomTemperatureControl
+		uid: root.bindPrefix + "/Capabilities/RoomTemperatureControl"
 	}
 
 	Component {

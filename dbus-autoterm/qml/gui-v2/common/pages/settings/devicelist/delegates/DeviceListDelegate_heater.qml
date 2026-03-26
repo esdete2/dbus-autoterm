@@ -30,7 +30,7 @@ DeviceListDelegate {
 
 	VeQuickItem {
 		id: controlTemperature
-		uid: root.device.serviceUid + "/Temperatures/Control"
+		uid: root.device.serviceUid + "/Temperatures/Room"
 	}
 
 	VeQuickItem {

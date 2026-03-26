@@ -9,14 +9,25 @@ Page {
 
 	GradientListView {
 		model: VisibleItemModel {
-			ListRadioButtonGroup {
-				text: "Sensor source"
-				dataItem.uid: root.bindPrefix + "/Settings/SensorSource"
-				optionModel: [
-					{ display: "Controller", value: 0 },
-					{ display: "External", value: 1 },
-					{ display: "Heater", value: 2 },
-				]
+			ListNavigation {
+				text: "Room temperature sensor"
+				dataItem.uid: root.bindPrefix + "/Settings/RoomTemperatureServiceText"
+				secondaryText: dataItem.valid ? dataItem.value : ""
+				onClicked: Global.pageManager.pushPage("/pages/settings/devicelist/heater/PageHeaterRoomSensor.qml", {
+					bindPrefix: root.bindPrefix,
+				})
+			}
+
+			ListText {
+				text: "Room temperature source"
+				dataItem.uid: root.bindPrefix + "/Temperatures/RoomSourceText"
+				secondaryText: dataItem.valid ? dataItem.value : ""
+			}
+
+			ListText {
+				text: "Temperature control"
+				dataItem.uid: root.bindPrefix + "/Capabilities/RoomTemperatureControl"
+				secondaryText: dataItem.valid && dataItem.value === 1 ? "Available" : "Unavailable"
 			}
 		}
 	}

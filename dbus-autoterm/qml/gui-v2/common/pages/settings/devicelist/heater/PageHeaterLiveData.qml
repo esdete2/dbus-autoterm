@@ -10,8 +10,8 @@ Page {
 	GradientListView {
 		model: VisibleItemModel {
 			ListTemperature {
-				text: "Control temperature"
-				dataItem.uid: root.bindPrefix + "/Temperatures/Control"
+				text: "Room temperature"
+				dataItem.uid: root.bindPrefix + "/Temperatures/Room"
 				preferredVisible: dataItem.valid
 			}
 

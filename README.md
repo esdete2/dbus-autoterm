@@ -16,6 +16,8 @@ This project is still under active development. The Cerbo integration, custom he
 - `velib_python` is bundled under `ext/velib_python`.
 - Primary UX comes from a dedicated `com.victronenergy.heater.autoterm_air2d` service plus installed custom GUI-v2 heater pages.
 - The current custom heater UI uses plain English labels only. The lightweight QML overlay install path does not yet ship a custom GUI-v2 translation catalog for Autoterm-specific strings.
+- Temperature-regulated UI modes are now gated by room-sensor availability. Without a real room sensor, the live UI exposes `Power` and `Ventilation` only.
+- The driver can now use Venus temperature services from Cerbo temperature inputs as the room-temperature source. The user can select the desired sensor in the heater setup page. By default it auto-selects the first enabled `com.victronenergy.temperature.*` service, and you can still pin a specific service in config.
 - The future `serial` backend remains in the tree for later hardware integration, but it is not part of the default install path.
 - Serial unplug/replug recovery is implemented in the provider so the service can recover when the tty disappears and later returns.
 
@@ -127,6 +129,29 @@ Cerbo runtime expectations:
 - Venus OS should provide `python3`, `dbus`, and `gi.repository.GLib`
 - `dbus-autoterm` requires the bundled `velib_python` under `/data/apps/dbus-autoterm/ext/velib_python`
 
+One-shot package + deploy from the development machine:
+
+```bash
+devbox run deploy
+```
+
+This command:
+
+- builds `dist/dbus-autoterm.tar.gz`
+- copies it to the Cerbo
+- replaces `/data/apps/dbus-autoterm`
+- preserves an existing `/data/apps/dbus-autoterm/config.ini`
+- runs `install.sh` on the Cerbo
+
+Optional environment overrides:
+
+- `CERBO_HOST`
+  - default: `root@einstein`
+- `CERBO_APP_DIR`
+  - default: `/data/apps/dbus-autoterm`
+- `CERBO_ARCHIVE_PATH`
+  - default: `/data/dbus-autoterm.tar.gz`
+
 ## Configuration
 
 The runtime template is `config.sample.ini`. After installation, edit `/data/apps/dbus-autoterm/config.ini` as needed.
@@ -141,6 +166,10 @@ The runtime template is `config.sample.ini`. After installation, edit `/data/app
   - on Cerbo GX this should normally be `/dev/ttyAUTOTERM`
 - `poll_interval`
   - poll cadence in seconds
+- `room_temperature_service`
+  - room-temperature source for temperature-controlled modes
+  - `auto` selects the first enabled Venus temperature service
+  - or set an explicit D-Bus service name such as `com.victronenergy.temperature.ttyO1`
 - `log_level`
   - standard Python log level such as `INFO` or `DEBUG`
 - `mock_dbus`
@@ -155,6 +184,13 @@ The runtime template is `config.sample.ini`. After installation, edit `/data/app
 - `firmware_version`
 - `hardware_version`
 - `connection`
+
+Cerbo room-temperature inputs:
+
+- the Cerbo temperature inputs must first be enabled in Venus settings by the user
+- once enabled, Venus publishes them as `com.victronenergy.temperature.*` services
+- the user can typically assign a custom sensor name in the standard Venus UI
+- `dbus-autoterm` reads those system temperature services and exposes the selected one as `/Temperatures/Room`
 
 ## Service control
 
@@ -258,6 +294,9 @@ The plugin is complete around the dummy runtime path:
   - live data page
   - diagnostics page
   - heater settings page
+- honest mode gating based on room-sensor availability:
+  - `Power` and `Ventilation` always available
+  - temperature-regulated modes only when a real room sensor is present
 - runit service scripts
 - offline Cerbo installation flow
 

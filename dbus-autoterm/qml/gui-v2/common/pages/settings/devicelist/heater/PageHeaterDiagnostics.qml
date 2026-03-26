@@ -38,6 +38,18 @@ Page {
 				dataItem.uid: root.bindPrefix + "/Alarms/Communication"
 				secondaryText: dataItem.valid && dataItem.value === 0 ? "OK" : "Alarm"
 			}
+
+			ListText {
+				text: "Room temperature source"
+				dataItem.uid: root.bindPrefix + "/Temperatures/RoomSourceText"
+				secondaryText: dataItem.valid ? dataItem.value : ""
+			}
+
+			ListText {
+				text: "Temperature control"
+				dataItem.uid: root.bindPrefix + "/Capabilities/RoomTemperatureControl"
+				secondaryText: dataItem.valid && dataItem.value === 1 ? "Available" : "Unavailable"
+			}
 		}
 	}
 }

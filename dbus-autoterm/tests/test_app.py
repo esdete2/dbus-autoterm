@@ -17,6 +17,7 @@ def _args(**overrides):
     values = {
         "backend": "dummy",
         "serial_device": None,
+        "room_temperature_service": None,
         "poll_interval": 1.0,
         "service_name": None,
         "device_instance": None,
@@ -65,6 +66,7 @@ class AppConfigTests(unittest.TestCase):
                         "[driver]",
                         "backend = serial",
                         "serial_device = /dev/ttyS1",
+                        "room_temperature_service = com.victronenergy.temperature.ttyO1",
                         "poll_interval = 2.5",
                         "mock_dbus = true",
                         "log_level = DEBUG",
@@ -82,6 +84,7 @@ class AppConfigTests(unittest.TestCase):
         runtime = _build_runtime_config(_args(), [], config)
         self.assertEqual(runtime.backend, "serial")
         self.assertEqual(runtime.serial_device, "/dev/ttyS1")
+        self.assertEqual(runtime.room_temperature_service, "com.victronenergy.temperature.ttyO1")
         self.assertEqual(runtime.poll_interval, 2.5)
         self.assertTrue(runtime.mock_dbus)
         self.assertEqual(runtime.log_level, "DEBUG")
@@ -108,14 +111,21 @@ class AppConfigTests(unittest.TestCase):
             config = _load_config(config_path)
 
         runtime = _build_runtime_config(
-            _args(backend="dummy", poll_interval=1.25, log_level="WARNING", device_instance=42),
-            ["--backend", "dummy", "--poll-interval", "1.25", "--log-level", "WARNING"],
+            _args(
+                backend="dummy",
+                poll_interval=1.25,
+                log_level="WARNING",
+                device_instance=42,
+                room_temperature_service="com.victronenergy.temperature.custom",
+            ),
+            ["--backend", "dummy", "--poll-interval", "1.25", "--log-level", "WARNING", "--room-temperature-service", "com.victronenergy.temperature.custom"],
             config,
         )
         self.assertEqual(runtime.backend, "dummy")
         self.assertEqual(runtime.poll_interval, 1.25)
         self.assertEqual(runtime.log_level, "WARNING")
         self.assertEqual(runtime.driver_config.device_instance, 42)
+        self.assertEqual(runtime.room_temperature_service, "com.victronenergy.temperature.custom")
 
 
 if __name__ == "__main__":

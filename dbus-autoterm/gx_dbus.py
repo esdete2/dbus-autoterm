@@ -9,6 +9,7 @@ from typing import Callable
 
 from controller import STATUS_TEXT
 from domain import HeaterPhase, HeaterSnapshot, OperatingMode
+from room_sensor import RoomTemperatureReading, RoomTemperatureServiceInfo
 
 
 class MockVeDbusService:
@@ -116,6 +117,12 @@ class HeaterSensorSource(IntEnum):
     HEATER = 2
 
 
+class RoomTemperatureSource(IntEnum):
+    NONE = 0
+    HEATER_EXTERNAL = 1
+    CERBO_DBUS = 2
+
+
 class HeaterState(IntEnum):
     OFF = 0
     STARTING = 1
@@ -162,8 +169,9 @@ class HeaterDbusAdapter:
         self._on_mode_change: Callable[[int], bool] | None = None
         self._on_target_temperature_change: Callable[[int], bool] | None = None
         self._on_power_level_change: Callable[[int], bool] | None = None
+        self._on_room_temperature_service_change: Callable[[str], bool] | None = None
         self._heater_mode = HeaterUiMode.POWER
-        self._sensor_source = HeaterSensorSource.CONTROLLER
+        self._sensor_source = HeaterSensorSource.EXTERNAL
         self._timers = [HeaterTimerEntry() for _ in range(3)]
         self._init_service()
 
@@ -178,19 +186,11 @@ class HeaterDbusAdapter:
     def _operating_mode_for_ui(self) -> OperatingMode:
         if self._heater_mode == HeaterUiMode.POWER:
             return OperatingMode.POWER
-        if self._sensor_source == HeaterSensorSource.EXTERNAL:
-            return OperatingMode.EXTERNAL_TEMPERATURE
-        if self._sensor_source == HeaterSensorSource.HEATER:
-            return OperatingMode.HEATER_TEMPERATURE
-        return OperatingMode.CONTROLLER_TEMPERATURE
+        return OperatingMode.EXTERNAL_TEMPERATURE
 
     def _sync_sensor_source_from_mode(self, mode: OperatingMode) -> None:
         if mode == OperatingMode.EXTERNAL_TEMPERATURE:
             self._sensor_source = HeaterSensorSource.EXTERNAL
-        elif mode == OperatingMode.HEATER_TEMPERATURE:
-            self._sensor_source = HeaterSensorSource.HEATER
-        elif mode == OperatingMode.CONTROLLER_TEMPERATURE:
-            self._sensor_source = HeaterSensorSource.CONTROLLER
 
     def _mode_text(self) -> str:
         return {
@@ -206,6 +206,33 @@ class HeaterDbusAdapter:
             HeaterSensorSource.EXTERNAL: "External",
             HeaterSensorSource.HEATER: "Heater",
         }[self._sensor_source]
+
+    def _room_temperature_source(self, snapshot: HeaterSnapshot, room_temperature_reading: RoomTemperatureReading | None = None) -> RoomTemperatureSource:
+        if room_temperature_reading is not None and room_temperature_reading.temperature_c is not None:
+            return RoomTemperatureSource.CERBO_DBUS
+        if snapshot.telemetry.external_temperature_c is not None:
+            return RoomTemperatureSource.HEATER_EXTERNAL
+        return RoomTemperatureSource.NONE
+
+    def _room_temperature_source_text(self, snapshot: HeaterSnapshot, room_temperature_reading: RoomTemperatureReading | None = None) -> str:
+        if room_temperature_reading is not None and room_temperature_reading.temperature_c is not None:
+            return room_temperature_reading.source_text
+        source = self._room_temperature_source(snapshot, room_temperature_reading)
+        return {
+            RoomTemperatureSource.NONE: "Unavailable",
+            RoomTemperatureSource.HEATER_EXTERNAL: "Heater external sensor",
+            RoomTemperatureSource.CERBO_DBUS: "Cerbo temperature service",
+        }[source]
+
+    def _room_temperature(self, snapshot: HeaterSnapshot, room_temperature_reading: RoomTemperatureReading | None = None):
+        if room_temperature_reading is not None and room_temperature_reading.temperature_c is not None:
+            return room_temperature_reading.temperature_c
+        if self._room_temperature_source(snapshot, room_temperature_reading) == RoomTemperatureSource.HEATER_EXTERNAL:
+            return snapshot.telemetry.external_temperature_c
+        return None
+
+    def _room_temperature_control_available(self, snapshot: HeaterSnapshot, room_temperature_reading: RoomTemperatureReading | None = None) -> bool:
+        return self._room_temperature(snapshot, room_temperature_reading) is not None
 
     def _timer_callback(self, index: int, field: str, minimum: int = 0, maximum: int | None = None):
         def _callback(path: str, value: object) -> bool:
@@ -244,9 +271,15 @@ class HeaterDbusAdapter:
         self.service.add_path("/ErrorText", "")
         self.service.add_path("/Alarms/Communication", 0)
         self.service.add_path("/Dc/0/Voltage", 0.0)
+        self.service.add_path("/Temperatures/Room", None)
+        self.service.add_path("/Temperatures/RoomSource", int(RoomTemperatureSource.NONE))
+        self.service.add_path("/Temperatures/RoomSourceText", "Unavailable")
         self.service.add_path("/Temperatures/Internal", None)
         self.service.add_path("/Temperatures/Control", None)
         self.service.add_path("/Temperatures/Heater", None)
+        self.service.add_path("/Capabilities/RoomTemperatureControl", 0)
+        self.service.add_path("/Capabilities/ExternalRoomSensor", 0)
+        self.service.add_path("/Capabilities/CerboRoomSensor", 0)
         self.service.add_path("/Status/FanRpmSet", 0)
         self.service.add_path("/Status/FanRpmActual", 0)
         self.service.add_path("/Status/FuelPumpFrequency", 0.0)
@@ -264,12 +297,18 @@ class HeaterDbusAdapter:
             onchangecallback=self._handle_power_level_change,
         )
         self.service.add_path(
-            "/Settings/SensorSource",
-            int(self._sensor_source),
+            "/Settings/RoomTemperatureService",
+            "auto",
             writeable=True,
-            onchangecallback=self._handle_sensor_source_change,
+            onchangecallback=self._handle_room_temperature_service_change,
         )
-        self.service.add_path("/Settings/SensorSourceText", self._sensor_source_text())
+        self.service.add_path("/Settings/RoomTemperatureServiceText", "Automatic")
+        self.service.add_path("/AvailableRoomSensors/Count", 0)
+        for index in range(8):
+            prefix = f"/AvailableRoomSensors/{index}"
+            self.service.add_path(f"{prefix}/Name", "")
+            self.service.add_path(f"{prefix}/Service", "")
+            self.service.add_path(f"{prefix}/Temperature", None)
         for index in range(len(self._timers)):
             prefix = f"/Timers/{index}"
             self.service.add_path(f"{prefix}/Enabled", self._timers[index].enabled, writeable=True, onchangecallback=self._timer_callback(index, "enabled", 0, 1))
@@ -295,6 +334,8 @@ class HeaterDbusAdapter:
             new_mode = HeaterUiMode(int(value))
         except ValueError:
             return False
+        if new_mode in {HeaterUiMode.TEMPERATURE, HeaterUiMode.HEAT_VENTILATION} and self.service["/Capabilities/RoomTemperatureControl"] != 1:
+            return False
 
         previous_mode = self._heater_mode
         self._heater_mode = new_mode
@@ -310,21 +351,14 @@ class HeaterDbusAdapter:
 
     def _handle_sensor_source_change(self, path: str, value: object) -> bool:
         del path
-        try:
-            sensor_source = HeaterSensorSource(int(value))
-        except ValueError:
-            return False
-        previous_sensor = self._sensor_source
-        self._sensor_source = sensor_source
-        if self._heater_mode not in {HeaterUiMode.TEMPERATURE, HeaterUiMode.HEAT_VENTILATION}:
-            return True
-        if self._on_mode_change is None:
-            self._sensor_source = previous_sensor
-            return False
-        if self._on_mode_change(int(self._operating_mode_for_ui())):
-            return True
-        self._sensor_source = previous_sensor
+        del value
         return False
+
+    def _handle_room_temperature_service_change(self, path: str, value: object) -> bool:
+        del path
+        if self._on_room_temperature_service_change is None:
+            return False
+        return self._on_room_temperature_service_change(str(value))
 
     def _handle_target_temperature_change(self, path: str, value: object) -> bool:
         del path
@@ -371,24 +405,26 @@ class HeaterDbusAdapter:
         return ""
 
     def _control_temperature(self, snapshot: HeaterSnapshot):
-        if self._sensor_source == HeaterSensorSource.EXTERNAL:
-            return snapshot.telemetry.external_temperature_c
-        if self._sensor_source == HeaterSensorSource.HEATER:
-            return snapshot.telemetry.heater_temperature_c
-        return (
-            snapshot.telemetry.controller_temperature_c
-            if snapshot.telemetry.controller_temperature_c is not None
-            else snapshot.telemetry.internal_temperature_c
-        )
+        return self._room_temperature(snapshot)
 
-    def publish_snapshot(self, snapshot: HeaterSnapshot, connected: bool) -> None:
+    def publish_snapshot(
+        self,
+        snapshot: HeaterSnapshot,
+        connected: bool,
+        room_temperature_reading: RoomTemperatureReading | None = None,
+    ) -> None:
         is_connected = bool(connected and snapshot.connected)
+        room_temperature = self._room_temperature(snapshot, room_temperature_reading)
+        room_source = self._room_temperature_source(snapshot, room_temperature_reading)
+        room_control_available = self._room_temperature_control_available(snapshot, room_temperature_reading)
 
         if snapshot.ventilation_mode:
             self._heater_mode = HeaterUiMode.VENTILATION
         elif snapshot.settings.mode == OperatingMode.POWER:
             if self._heater_mode not in {HeaterUiMode.VENTILATION, HeaterUiMode.HEAT_VENTILATION}:
                 self._heater_mode = HeaterUiMode.POWER
+        elif not room_control_available:
+            self._heater_mode = HeaterUiMode.POWER
         elif self._heater_mode not in {HeaterUiMode.VENTILATION, HeaterUiMode.HEAT_VENTILATION}:
             self._heater_mode = HeaterUiMode.TEMPERATURE
         self._sync_sensor_source_from_mode(snapshot.settings.mode)
@@ -404,14 +440,45 @@ class HeaterDbusAdapter:
         self.service["/ErrorText"] = self._error_text(snapshot, is_connected)
         self.service["/Alarms/Communication"] = 0 if is_connected else 2
         self.service["/Dc/0/Voltage"] = snapshot.telemetry.battery_voltage_v
+        self.service["/Temperatures/Room"] = room_temperature
+        self.service["/Temperatures/RoomSource"] = int(room_source)
+        self.service["/Temperatures/RoomSourceText"] = self._room_temperature_source_text(snapshot, room_temperature_reading)
         self.service["/Temperatures/Internal"] = snapshot.telemetry.internal_temperature_c
-        self.service["/Temperatures/Control"] = self._control_temperature(snapshot)
+        self.service["/Temperatures/Control"] = room_temperature
         self.service["/Temperatures/Heater"] = snapshot.telemetry.heater_temperature_c
+        self.service["/Capabilities/RoomTemperatureControl"] = 1 if room_control_available else 0
+        self.service["/Capabilities/ExternalRoomSensor"] = 1 if snapshot.telemetry.external_temperature_c is not None else 0
+        self.service["/Capabilities/CerboRoomSensor"] = 1 if room_source == RoomTemperatureSource.CERBO_DBUS else 0
         self.service["/Status/FanRpmSet"] = snapshot.telemetry.fan_rpm_set
         self.service["/Status/FanRpmActual"] = snapshot.telemetry.fan_rpm_actual
         self.service["/Status/FuelPumpFrequency"] = snapshot.telemetry.fuel_pump_frequency_hz
         self.service["/Settings/Mode"] = int(snapshot.settings.mode)
         self.service["/Settings/TargetTemperature"] = snapshot.settings.setpoint_c
         self.service["/Settings/PowerLevel"] = snapshot.settings.power_level
-        self.service["/Settings/SensorSource"] = int(self._sensor_source)
-        self.service["/Settings/SensorSourceText"] = self._sensor_source_text()
+
+    def publish_room_temperature_services(
+        self,
+        services: list[RoomTemperatureServiceInfo],
+        selected_service: str,
+    ) -> None:
+        self.service["/Settings/RoomTemperatureService"] = selected_service or "auto"
+        if selected_service in {"", "auto"}:
+            self.service["/Settings/RoomTemperatureServiceText"] = "Automatic"
+        else:
+            selected = next((service for service in services if service.service_name == selected_service), None)
+            self.service["/Settings/RoomTemperatureServiceText"] = (
+                selected.display_name if selected is not None else "Configured sensor unavailable"
+            )
+
+        self.service["/AvailableRoomSensors/Count"] = len(services)
+        for index in range(8):
+            prefix = f"/AvailableRoomSensors/{index}"
+            if index < len(services):
+                service = services[index]
+                self.service[f"{prefix}/Name"] = service.display_name
+                self.service[f"{prefix}/Service"] = service.service_name
+                self.service[f"{prefix}/Temperature"] = service.temperature_c
+            else:
+                self.service[f"{prefix}/Name"] = ""
+                self.service[f"{prefix}/Service"] = ""
+                self.service[f"{prefix}/Temperature"] = None

@@ -16,4 +16,4 @@ serial = ["pyserial>=3.5"]
 dbus-autoterm = "app:main"
 
 [tool.setuptools]
-py-modules = ["app", "controller", "domain", "gx_dbus", "protocol", "provider", "transports"]
+py-modules = ["app", "controller", "domain", "gx_dbus", "protocol", "provider", "room_sensor", "transports"]
