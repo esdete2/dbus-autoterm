@@ -36,7 +36,9 @@
       "test": ["devbox run emulation:test", "devbox run dbus-autoterm:test"],
       "check": ["devbox run emulation:check", "devbox run dbus-autoterm:check"],
       "package": ["make package"],
-      "deploy": ["make deploy"]
+      "deploy": ["make deploy"],
+      "package:native-gui": ["make package:native-gui"],
+      "deploy:native-gui": ["make deploy:native-gui"]
     }
   }
 }

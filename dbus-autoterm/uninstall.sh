@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
 SERVICE_NAME="dbus-autoterm"
 SERVICE_LINK="/service/$SERVICE_NAME"
+GUI_VARIANT_FILE="$SCRIPT_DIR/.gui-variant"
 RC_LOCAL="/data/rc.local"
 INSTALL_LINE="bash $SCRIPT_DIR/install.sh"
 SERIAL_STARTER_RULES="/etc/udev/rules.d/serial-starter.rules"
@@ -28,6 +29,8 @@ if [ -f "$SERIAL_STARTER_RULES" ]; then
     udevadm control --reload || true
 fi
 bash "$SCRIPT_DIR/custom-gui-uninstall.sh"
+bash "$SCRIPT_DIR/native-gui-uninstall.sh"
+rm -f "$GUI_VARIANT_FILE"
 remount_root ro
 
 pkill -f "/data/apps/dbus-autoterm/app.py" || true

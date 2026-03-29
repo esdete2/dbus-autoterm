@@ -11,11 +11,15 @@ Page {
 		model: VisibleItemModel {
 			ListNavigation {
 				text: "Room temperature sensor"
-				dataItem.uid: root.bindPrefix + "/Settings/RoomTemperatureServiceText"
-				secondaryText: dataItem.valid ? dataItem.value : ""
+				secondaryText: roomTemperatureServiceText.valid ? roomTemperatureServiceText.value : ""
 				onClicked: Global.pageManager.pushPage("/pages/settings/devicelist/heater/PageHeaterRoomSensor.qml", {
 					bindPrefix: root.bindPrefix,
 				})
+
+				VeQuickItem {
+					id: roomTemperatureServiceText
+					uid: root.bindPrefix + "/Settings/RoomTemperatureServiceText"
+				}
 			}
 
 			ListText {

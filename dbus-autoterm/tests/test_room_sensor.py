@@ -1,6 +1,6 @@
 import unittest
 
-from room_sensor import DbusRoomTemperatureReader
+from room_sensor import DbusRoomTemperatureReader, HEATER_INTAKE_TEMPERATURE_SERVICE
 
 
 class _FakeObject:
@@ -76,6 +76,16 @@ class RoomSensorTests(unittest.TestCase):
         self.assertIsNone(reading.temperature_c)
         self.assertEqual(reading.source_text, "Configured Cerbo temperature sensor unavailable")
         self.assertEqual(reading.service_name, "com.victronenergy.temperature.missing")
+
+    def test_heater_intake_selection_is_not_reported_as_missing_cerbo_sensor(self):
+        reading = DbusRoomTemperatureReader(
+            selected_service=HEATER_INTAKE_TEMPERATURE_SERVICE,
+            bus=_FakeBus({}),
+        ).refresh()
+
+        self.assertIsNone(reading.temperature_c)
+        self.assertEqual(reading.source_text, "Heater intake sensor")
+        self.assertEqual(reading.service_name, HEATER_INTAKE_TEMPERATURE_SERVICE)
 
 
 if __name__ == "__main__":

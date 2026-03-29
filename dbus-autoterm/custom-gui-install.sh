@@ -20,7 +20,7 @@ while IFS= read -r source; do
         cp "$source" "$target"
         files_changed=1
     fi
-done < <(find "$SOURCE_ROOT" -type f -name '*.qml' | sort)
+done < <(find "$SOURCE_ROOT" -type f \( -name '*.qml' -o -name '*.svg' -o -name '*.png' \) | sort)
 
 if [ "$files_changed" -eq 1 ]; then
     echo "Installed custom Autoterm GUI files."

@@ -5,16 +5,33 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 APP_DIR="$ROOT_DIR/dbus-autoterm"
 EXT_DIR="$APP_DIR/ext"
 DIST_DIR="$ROOT_DIR/dist"
-ARCHIVE="$DIST_DIR/dbus-autoterm.tar.gz"
+GUI_VARIANT="${GUI_VARIANT:-default}"
+ARCHIVE_NAME="dbus-autoterm.tar.gz"
 VELIB_PYTHON_REF="${VELIB_PYTHON_REF:-master}"
 PYSERIAL_REF="${PYSERIAL_REF:-v3.5}"
 TMP_DIR=$(mktemp -d)
+export COPYFILE_DISABLE=1
 
 cleanup() {
     rm -rf "$TMP_DIR"
 }
 
 trap cleanup EXIT
+
+case "$GUI_VARIANT" in
+    default)
+        ;;
+    native-gui)
+        ARCHIVE_NAME="dbus-autoterm-native-gui.tar.gz"
+        ;;
+    *)
+        echo "Unsupported GUI_VARIANT: $GUI_VARIANT" >&2
+        exit 1
+        ;;
+esac
+
+ARCHIVE="$DIST_DIR/$ARCHIVE_NAME"
+VARIANT_EXCLUDE=
 
 if ! command -v curl >/dev/null 2>&1; then
     echo "Missing curl runtime" >&2
@@ -24,6 +41,11 @@ fi
 if ! command -v tar >/dev/null 2>&1; then
     echo "Missing tar runtime" >&2
     exit 1
+fi
+
+TAR_BIN="tar"
+if command -v gtar >/dev/null 2>&1; then
+    TAR_BIN="gtar"
 fi
 
 download_archive() {
@@ -72,11 +94,24 @@ install_dependency \
     "pyserial-*"
 
 rm -f "$ARCHIVE"
-tar -C "$ROOT_DIR" \
+tar_args=""
+if "$TAR_BIN" --help 2>/dev/null | grep -q -- '--no-mac-metadata'; then
+    tar_args="$tar_args --no-mac-metadata"
+fi
+if "$TAR_BIN" --help 2>/dev/null | grep -q -- '--no-xattrs'; then
+    tar_args="$tar_args --no-xattrs"
+fi
+if [ "$GUI_VARIANT" = "default" ]; then
+    VARIANT_EXCLUDE="--exclude=dbus-autoterm/native-gui"
+fi
+
+"$TAR_BIN" -C "$ROOT_DIR" $tar_args \
     --exclude='dbus-autoterm/__pycache__' \
     --exclude='dbus-autoterm/tests' \
     --exclude='dbus-autoterm/*.pyc' \
     --exclude='dbus-autoterm/.DS_Store' \
+    --exclude='dbus-autoterm/._*' \
+    $VARIANT_EXCLUDE \
     -czf "$ARCHIVE" \
     dbus-autoterm
 

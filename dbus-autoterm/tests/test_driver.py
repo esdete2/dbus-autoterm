@@ -5,7 +5,7 @@ from domain import HeaterPhase
 from gx_dbus import DriverConfig, HeaterDbusAdapter, MockVeDbusService
 from protocol import CONTROLLER_PROFILE, Frame
 from provider import DummyHeaterProvider, SerialHeaterProvider, SerialProviderConfig
-from room_sensor import RoomTemperatureReading
+from room_sensor import HEATER_INTAKE_TEMPERATURE_SERVICE, RoomTemperatureReading
 
 
 class DriverTests(unittest.TestCase):
@@ -87,8 +87,36 @@ class DriverTests(unittest.TestCase):
 
         self.assertEqual(service["/Capabilities/RoomTemperatureControl"], 1)
         self.assertEqual(service["/Temperatures/Room"], 18)
-        self.assertEqual(service["/Temperatures/RoomSourceText"], "Heater external sensor")
+        self.assertEqual(service["/Temperatures/RoomSourceText"], "Heater intake sensor")
         self.assertEqual(service["/Mode"], 1)
+
+    def test_explicit_heater_intake_sensor_overrides_cerbo_room_sensor(self):
+        class _Reader:
+            selected_service = HEATER_INTAKE_TEMPERATURE_SERVICE
+
+            def refresh(self):
+                return RoomTemperatureReading(
+                    temperature_c=20.5,
+                    source_text="Salon",
+                    service_name="com.victronenergy.temperature.ttyO1",
+                )
+
+            def available_services(self):
+                return []
+
+            def set_selected_service(self, service_name: str):
+                self.selected_service = service_name
+
+        provider, service, app = self._build_app(room_temperature_reader=_Reader())
+        provider._snapshot.telemetry.external_temperature_c = 18
+
+        app.run_once()
+        service.set_value("/Mode", 1)
+        app.run_once()
+
+        self.assertEqual(service["/Temperatures/Room"], 18)
+        self.assertEqual(service["/Temperatures/RoomSourceText"], "Heater intake sensor")
+        self.assertEqual(service["/Settings/RoomTemperatureService"], HEATER_INTAKE_TEMPERATURE_SERVICE)
 
     def test_cerbo_room_sensor_enables_temperature_control(self):
         class _Reader:
@@ -150,6 +178,42 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(reader.selected_service, "com.victronenergy.temperature.ttyO1")
         self.assertEqual(service["/Settings/RoomTemperatureService"], "com.victronenergy.temperature.ttyO1")
         self.assertEqual(service["/Settings/RoomTemperatureServiceText"], "Salon")
+
+    def test_heater_intake_sensor_selection_round_trips(self):
+        provider, service, app = self._build_app()
+        provider._snapshot.telemetry.external_temperature_c = 17
+
+        app.run_once()
+        service.set_value("/Settings/RoomTemperatureService", HEATER_INTAKE_TEMPERATURE_SERVICE)
+
+        self.assertEqual(service["/Settings/RoomTemperatureService"], HEATER_INTAKE_TEMPERATURE_SERVICE)
+        self.assertEqual(service["/Settings/RoomTemperatureServiceText"], "Heater intake sensor")
+
+    def test_explicit_unavailable_cerbo_sensor_does_not_fallback_to_heater_intake(self):
+        class _Reader:
+            selected_service = "com.victronenergy.temperature.missing"
+
+            def refresh(self):
+                return RoomTemperatureReading(
+                    temperature_c=None,
+                    source_text="Configured Cerbo temperature sensor unavailable",
+                    service_name=self.selected_service,
+                )
+
+            def available_services(self):
+                return []
+
+            def set_selected_service(self, service_name: str):
+                self.selected_service = service_name
+
+        provider, service, app = self._build_app(room_temperature_reader=_Reader())
+        provider._snapshot.telemetry.external_temperature_c = 18
+
+        app.run_once()
+
+        self.assertEqual(service["/Capabilities/RoomTemperatureControl"], 0)
+        self.assertIsNone(service["/Temperatures/Room"])
+        self.assertEqual(service["/Temperatures/RoomSourceText"], "Configured Cerbo temperature sensor unavailable")
 
     def test_temperature_mode_is_rejected_without_room_sensor(self):
         _, service, app = self._build_app()

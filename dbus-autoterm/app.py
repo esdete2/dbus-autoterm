@@ -10,7 +10,13 @@ from pathlib import Path
 from domain import HeaterPhase, OperatingMode
 from gx_dbus import DriverConfig, HeaterDbusAdapter, HeaterUiMode, MockVeDbusService
 from provider import DummyHeaterProvider, SerialHeaterProvider, SerialProviderConfig
-from room_sensor import DbusRoomTemperatureReader, NullRoomTemperatureReader
+from room_sensor import (
+    AUTO_ROOM_TEMPERATURE_SERVICE,
+    HEATER_INTAKE_TEMPERATURE_SERVICE,
+    DbusRoomTemperatureReader,
+    NullRoomTemperatureReader,
+    RoomTemperatureServiceInfo,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -53,10 +59,26 @@ class HeaterDriverApp:
     def run_once(self) -> None:
         snapshot = self.provider.refresh()
         room_temperature = self.room_temperature_reader.refresh()
-        self.dbus_adapter.publish_snapshot(snapshot, self.provider.get_health().connected, room_temperature)
+        selected_service = self.room_temperature_reader.selected_service or AUTO_ROOM_TEMPERATURE_SERVICE
+        self.dbus_adapter.publish_snapshot(
+            snapshot,
+            self.provider.get_health().connected,
+            room_temperature,
+            selected_service,
+        )
+        available_services = self.room_temperature_reader.available_services()
+        if snapshot.telemetry.external_temperature_c is not None:
+            available_services = [
+                RoomTemperatureServiceInfo(
+                    service_name=HEATER_INTAKE_TEMPERATURE_SERVICE,
+                    display_name="Heater intake sensor",
+                    temperature_c=float(snapshot.telemetry.external_temperature_c),
+                ),
+                *available_services,
+            ]
         self.dbus_adapter.publish_room_temperature_services(
-            self.room_temperature_reader.available_services(),
-            self.room_temperature_reader.selected_service,
+            available_services,
+            selected_service,
         )
 
     def poll(self) -> bool:
@@ -73,7 +95,7 @@ class HeaterDriverApp:
         return self._update_settings(power_level=int(power_level))
 
     def update_room_temperature_service(self, service_name: str) -> bool:
-        normalized = service_name or "auto"
+        normalized = service_name or AUTO_ROOM_TEMPERATURE_SERVICE
         self.room_temperature_reader.set_selected_service(normalized)
         self._persist_room_temperature_service(normalized)
         self.run_once()

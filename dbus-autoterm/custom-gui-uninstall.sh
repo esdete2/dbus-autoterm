@@ -13,4 +13,4 @@ while IFS= read -r source; do
     rel_path="${source#$SOURCE_ROOT/}"
     target="$TARGET_ROOT/$rel_path"
     rm -f "$target"
-done < <(find "$SOURCE_ROOT" -type f -name '*.qml' | sort)
+done < <(find "$SOURCE_ROOT" -type f \( -name '*.qml' -o -name '*.svg' -o -name '*.png' \) | sort)

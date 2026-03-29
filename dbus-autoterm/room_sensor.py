@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+AUTO_ROOM_TEMPERATURE_SERVICE = "auto"
+HEATER_INTAKE_TEMPERATURE_SERVICE = "heater_external"
+
 
 @dataclass(frozen=True)
 class RoomTemperatureReading:
@@ -19,7 +22,7 @@ class RoomTemperatureServiceInfo:
 
 
 class NullRoomTemperatureReader:
-    selected_service = "auto"
+    selected_service = AUTO_ROOM_TEMPERATURE_SERVICE
 
     def refresh(self) -> RoomTemperatureReading:
         return RoomTemperatureReading()
@@ -28,12 +31,12 @@ class NullRoomTemperatureReader:
         return []
 
     def set_selected_service(self, service_name: str) -> None:
-        self.selected_service = service_name or "auto"
+        self.selected_service = service_name or AUTO_ROOM_TEMPERATURE_SERVICE
 
 
 class DbusRoomTemperatureReader:
-    def __init__(self, selected_service: str = "auto", bus=None) -> None:
-        self._selected_service = selected_service or "auto"
+    def __init__(self, selected_service: str = AUTO_ROOM_TEMPERATURE_SERVICE, bus=None) -> None:
+        self._selected_service = selected_service or AUTO_ROOM_TEMPERATURE_SERVICE
         self._bus = bus
 
     @property
@@ -41,16 +44,23 @@ class DbusRoomTemperatureReader:
         return self._selected_service
 
     def set_selected_service(self, service_name: str) -> None:
-        self._selected_service = service_name or "auto"
+        self._selected_service = service_name or AUTO_ROOM_TEMPERATURE_SERVICE
 
     def refresh(self) -> RoomTemperatureReading:
+        if self._selected_service == HEATER_INTAKE_TEMPERATURE_SERVICE:
+            return RoomTemperatureReading(
+                temperature_c=None,
+                source_text="Heater intake sensor",
+                service_name=HEATER_INTAKE_TEMPERATURE_SERVICE,
+            )
+
         services = self._candidate_services()
         for service_name in services:
             reading = self._read_service(service_name)
             if reading is not None:
                 return reading
 
-        if self._selected_service not in {"", "auto"}:
+        if self._selected_service not in {"", AUTO_ROOM_TEMPERATURE_SERVICE}:
             return RoomTemperatureReading(
                 temperature_c=None,
                 source_text="Configured Cerbo temperature sensor unavailable",
@@ -69,7 +79,7 @@ class DbusRoomTemperatureReader:
         return services
 
     def _candidate_services(self) -> list[str]:
-        if self._selected_service not in {"", "auto"}:
+        if self._selected_service not in {"", AUTO_ROOM_TEMPERATURE_SERVICE}:
             return [self._selected_service]
         names = [name for name in self._get_bus().list_names() if name.startswith("com.victronenergy.temperature.")]
         return sorted(names)

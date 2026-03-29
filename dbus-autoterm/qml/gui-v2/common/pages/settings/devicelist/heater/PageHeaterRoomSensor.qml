@@ -8,44 +8,42 @@ Page {
 	title: "Room temperature sensor"
 
 	GradientListView {
-		model: VisibleItemModel {
-			ListButton {
-				text: "Automatic"
-				secondaryText: selectedService.valid && selectedService.value === "auto" ? "Selected" : ""
-				onClicked: selectedService.setValue("auto")
+		model: (availableCount.valid ? availableCount.value : 0) + 1
+
+		delegate: ListButton {
+			required property int index
+			readonly property bool automaticRow: index === 0
+			readonly property int sensorIndex: index - 1
+			readonly property string sensorPrefix: root.bindPrefix + "/AvailableRoomSensors/" + sensorIndex
+			text: automaticRow ? "Automatic" : (sensorName.valid ? sensorName.value : "")
+			secondaryText: automaticRow
+				? (selectedService.valid && selectedService.value === "auto" ? "Selected" : "")
+				: (selectedService.valid && sensorService.valid && selectedService.value === sensorService.value
+					? "Selected"
+					: (sensorTemperature.valid
+						? Number(sensorTemperature.value).toFixed(1) + Units.defaultUnitString(Global.systemSettings.temperatureUnit)
+						: ""))
+			onClicked: {
+				if (automaticRow) {
+					selectedService.setValue("auto")
+				} else if (sensorService.valid && sensorService.value !== "") {
+					selectedService.setValue(sensorService.value)
+				}
 			}
 
-			Repeater {
-				model: availableCount.valid ? availableCount.value : 0
+			VeQuickItem {
+				id: sensorName
+				uid: sensorPrefix + "/Name"
+			}
 
-				delegate: ListButton {
-					required property int index
-					readonly property string sensorPrefix: root.bindPrefix + "/AvailableRoomSensors/" + index
-					text: sensorName.valid ? sensorName.value : ""
-					secondaryText: selectedService.valid && sensorService.valid && selectedService.value === sensorService.value
-						? "Selected"
-						: (sensorTemperature.valid ? sensorTemperature.value.toFixed(1) + Units.defaultUnitString(Global.systemSettings.temperatureUnit) : "")
-					onClicked: {
-						if (sensorService.valid && sensorService.value !== "") {
-							selectedService.setValue(sensorService.value)
-						}
-					}
+			VeQuickItem {
+				id: sensorService
+				uid: sensorPrefix + "/Service"
+			}
 
-					VeQuickItem {
-						id: sensorName
-						uid: sensorPrefix + "/Name"
-					}
-
-					VeQuickItem {
-						id: sensorService
-						uid: sensorPrefix + "/Service"
-					}
-
-					VeQuickItem {
-						id: sensorTemperature
-						uid: sensorPrefix + "/Temperature"
-					}
-				}
+			VeQuickItem {
+				id: sensorTemperature
+				uid: sensorPrefix + "/Temperature"
 			}
 		}
 	}

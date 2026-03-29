@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls.impl as CP
 import QtQuick.Templates as T
 import Victron.VenusOS
 
@@ -39,18 +40,17 @@ DevicePage {
 		: (isVentilationMode
 			? "The heater will start in ventilation mode."
 			: "The heater will start heating with the current settings.")
+	readonly property string heaterIconSource: "file:///opt/victronenergy/gui-v2/Victron/VenusOS/images/icon_heater.svg"
 
 	showSwitches: false
-	settingsHeader: Item {
-		width: root.width
-		implicitHeight: warningBanner.visible ? warningBanner.implicitHeight + Theme.geometry_gradientList_spacing : 0
+	settingsHeader: SettingsColumn {
+		width: parent?.width ?? 0
+		bottomPadding: warningBanner.visible ? spacing : 0
 
 		Rectangle {
 			id: warningBanner
 			visible: root.warningText.length > 0
-			width: parent.width - (Theme.geometry_page_content_horizontalMargin * 2)
-			x: Theme.geometry_page_content_horizontalMargin
-			y: Theme.geometry_gradientList_spacing
+			width: parent.width
 			radius: Theme.geometry_listItem_radius
 			color: Theme.color_toastNotification_background_warning
 			implicitHeight: bannerContent.implicitHeight + (Theme.geometry_listItem_content_verticalMargin * 2)
@@ -140,22 +140,49 @@ DevicePage {
 			slider.stepSize: 1
 		}
 
-		ListQuantityGroup {
+		ListItem {
 			text: "Live values"
-			model: QuantityObjectModel {
-				QuantityObject { object: roomTemperature; unit: Global.systemSettings.temperatureUnit }
-				QuantityObject { object: heaterTemperature; unit: Global.systemSettings.temperatureUnit }
-			}
 
-			VeQuickItem {
-				id: roomTemperature
-				uid: root.bindPrefix + "/Temperatures/Room"
-			}
+			content.children: [
+				Row {
+					spacing: Theme.geometry_listItem_content_spacing / 2
 
-			VeQuickItem {
-				id: heaterTemperature
-				uid: root.bindPrefix + "/Temperatures/Heater"
-			}
+					CP.ColorImage {
+						source: "qrc:/images/icon_temp_32.svg"
+						color: Theme.color_listItem_secondaryText
+						width: 32
+						height: 32
+					}
+
+					Label {
+						anchors.verticalCenter: parent.verticalCenter
+						text: root.formatTemperature(roomTemperature)
+						font.pixelSize: Theme.font_size_body2
+						color: Theme.color_listItem_secondaryText
+					}
+
+					Label {
+						anchors.verticalCenter: parent.verticalCenter
+						text: "|"
+						font.pixelSize: Theme.font_size_body2
+						color: Theme.color_listItem_secondaryText
+					}
+
+					CP.ColorImage {
+						source: root.heaterIconSource
+						color: Theme.color_listItem_secondaryText
+						width: 32
+						height: 32
+					}
+
+					Label {
+						anchors.verticalCenter: parent.verticalCenter
+						text: root.formatTemperature(heaterTemperature)
+						font.pixelSize: Theme.font_size_body2
+						color: Theme.color_listItem_secondaryText
+					}
+				}
+			]
 		}
 
 		ListNavigation {
@@ -205,6 +232,16 @@ DevicePage {
 		uid: root.bindPrefix + "/Capabilities/RoomTemperatureControl"
 	}
 
+	VeQuickItem {
+		id: roomTemperature
+		uid: root.bindPrefix + "/Temperatures/Room"
+	}
+
+	VeQuickItem {
+		id: heaterTemperature
+		uid: root.bindPrefix + "/Temperatures/Heater"
+	}
+
 	Component {
 		id: startStopDialogComponent
 
@@ -240,5 +277,13 @@ DevicePage {
 		default:
 			return "Not connected"
 		}
+	}
+
+	function formatTemperature(item) {
+		if (!item.valid || item.value === undefined || item.value === null || item.value === "") {
+			return "--"
+		}
+		return Number(Units.convert(item.value, VenusOS.Units_Temperature_Celsius, Global.systemSettings.temperatureUnit)).toFixed(0)
+			+ Global.systemSettings.temperatureUnitSuffix
 	}
 }
