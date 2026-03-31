@@ -53,11 +53,14 @@ class HeaterDriverApp:
                 snapshot = self.provider.start(self.provider.get_snapshot().settings)
         else:
             snapshot = self.provider.stop()
-        self.dbus_adapter.publish_snapshot(snapshot, self.provider.get_health().connected)
+        self._publish_snapshot_with_room_context(snapshot)
         return True
 
     def run_once(self) -> None:
         snapshot = self.provider.refresh()
+        self._publish_snapshot_with_room_context(snapshot)
+
+    def _publish_snapshot_with_room_context(self, snapshot) -> None:
         room_temperature = self.room_temperature_reader.refresh()
         selected_service = self.room_temperature_reader.selected_service or AUTO_ROOM_TEMPERATURE_SERVICE
         self.dbus_adapter.publish_snapshot(
@@ -106,11 +109,10 @@ class HeaterDriverApp:
         settings = replace(current_snapshot.settings, **changes)
         active = current_snapshot.phase in {HeaterPhase.STARTING, HeaterPhase.WARMING_UP, HeaterPhase.RUNNING}
         if self.dbus_adapter.current_heater_mode == HeaterUiMode.VENTILATION:
-            current_snapshot.settings = settings
-            snapshot = self.provider.start_ventilation(settings.power_level) if active else current_snapshot
+            snapshot = self.provider.start_ventilation(settings.power_level) if active else self.provider.update_settings(settings)
         else:
             snapshot = self.provider.update_settings(settings)
-        self.dbus_adapter.publish_snapshot(snapshot, self.provider.get_health().connected)
+        self._publish_snapshot_with_room_context(snapshot)
         return True
 
     def _persist_room_temperature_service(self, service_name: str) -> None:

@@ -476,12 +476,13 @@ class HeaterDbusAdapter:
 
         if snapshot.ventilation_mode:
             self._heater_mode = HeaterUiMode.VENTILATION
+        elif self._heater_mode in {HeaterUiMode.VENTILATION, HeaterUiMode.HEAT_VENTILATION}:
+            pass
         elif snapshot.settings.mode == OperatingMode.POWER:
-            if self._heater_mode not in {HeaterUiMode.VENTILATION, HeaterUiMode.HEAT_VENTILATION}:
-                self._heater_mode = HeaterUiMode.POWER
+            self._heater_mode = HeaterUiMode.POWER
         elif not room_control_available:
             self._heater_mode = HeaterUiMode.POWER
-        elif self._heater_mode not in {HeaterUiMode.VENTILATION, HeaterUiMode.HEAT_VENTILATION}:
+        else:
             self._heater_mode = HeaterUiMode.TEMPERATURE
         self._sync_sensor_source_from_mode(snapshot.settings.mode)
 

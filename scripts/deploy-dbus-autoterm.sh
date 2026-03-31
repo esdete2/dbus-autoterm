@@ -2,17 +2,36 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ -f "$ROOT_DIR/.env" ]; then
+    # shellcheck disable=SC1091
+    . "$ROOT_DIR/.env"
+fi
+
 GUI_VARIANT="${GUI_VARIANT:-default}"
 ARCHIVE="$ROOT_DIR/dist/dbus-autoterm.tar.gz"
 CERBO_HOST="${CERBO_HOST:-root@einstein}"
 CERBO_APP_DIR="${CERBO_APP_DIR:-/data/apps/dbus-autoterm}"
 CERBO_ARCHIVE_PATH="${CERBO_ARCHIVE_PATH:-/data/dbus-autoterm.tar.gz}"
+CERBO_PASSWORD="${CERBO_PASSWORD:-${SSH_PASSWORD:-}}"
 TMP_DIR=$(mktemp -d)
 CONTROL_PATH="$TMP_DIR/ssh-control"
 SSH_OPTS="-o ControlMaster=auto -o ControlPersist=60 -o ControlPath=$CONTROL_PATH"
+SSH_BIN="ssh"
+SCP_BIN="scp"
+
+if [ -n "$CERBO_PASSWORD" ]; then
+    if ! command -v sshpass >/dev/null 2>&1; then
+        echo "CERBO_PASSWORD is set, but sshpass is not installed." >&2
+        echo "Install sshpass or unset CERBO_PASSWORD to use the normal interactive password prompt." >&2
+        exit 1
+    fi
+    export SSHPASS="$CERBO_PASSWORD"
+    SSH_BIN="sshpass -e ssh"
+    SCP_BIN="sshpass -e scp"
+fi
 
 cleanup() {
-    ssh $SSH_OPTS -O exit "$CERBO_HOST" >/dev/null 2>&1 || true
+    $SSH_BIN $SSH_OPTS -O exit "$CERBO_HOST" >/dev/null 2>&1 || true
     rm -rf "$TMP_DIR"
 }
 
@@ -51,10 +70,10 @@ if ! command -v scp >/dev/null 2>&1; then
 fi
 
 echo "Uploading $ARCHIVE to $CERBO_HOST:$CERBO_ARCHIVE_PATH"
-scp $SSH_OPTS "$ARCHIVE" "$CERBO_HOST:$CERBO_ARCHIVE_PATH"
+$SCP_BIN $SSH_OPTS "$ARCHIVE" "$CERBO_HOST:$CERBO_ARCHIVE_PATH"
 
 echo "Deploying package on $CERBO_HOST"
-ssh $SSH_OPTS "$CERBO_HOST" \
+$SSH_BIN $SSH_OPTS "$CERBO_HOST" \
     "ARCHIVE_PATH='$CERBO_ARCHIVE_PATH' CERBO_APP_DIR='$CERBO_APP_DIR' GUI_VARIANT='$GUI_VARIANT' /bin/sh -s" <<'REMOTE_SCRIPT'
 set -eu
 

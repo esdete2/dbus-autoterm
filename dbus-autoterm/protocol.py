@@ -103,4 +103,9 @@ class FrameParser:
                 return frames
             packet = bytes(self._buffer[:frame_length])
             del self._buffer[:frame_length]
-            frames.append(decode_frame(packet, checksum_byteorder=self._checksum_byteorder))
+            try:
+                frames.append(decode_frame(packet, checksum_byteorder=self._checksum_byteorder))
+            except ProtocolError:
+                # Drop the corrupt candidate and continue scanning buffered bytes
+                # so later valid frames can still be recovered.
+                continue

@@ -1,0 +1,15 @@
+module dbus-autoterm
+CircularHeaterRingDemo 1.0 preview/CircularHeaterRingDemo.qml
+CircularHeaterRingPreview 1.0 preview/CircularHeaterRingPreview.qml
+SwipePageModel 1.0 dbus-autoterm/native-gui/Victron/VenusOS/components/SwipePageModel.qml
+CircularHeaterRing 1.0 dbus-autoterm/native-gui/Victron/VenusOS/pages/CircularHeaterRing.qml
+HeaterPage 1.0 dbus-autoterm/native-gui/Victron/VenusOS/pages/HeaterPage.qml
+HeaterPageBackup 1.0 dbus-autoterm/native-gui/Victron/VenusOS/pages/HeaterPageBackup.qml
+DeviceListDelegate_heater 1.0 dbus-autoterm/qml/gui-v2/common/pages/settings/devicelist/delegates/DeviceListDelegate_heater.qml
+PageHeater 1.0 dbus-autoterm/qml/gui-v2/common/pages/settings/devicelist/heater/PageHeater.qml
+PageHeaterDiagnostics 1.0 dbus-autoterm/qml/gui-v2/common/pages/settings/devicelist/heater/PageHeaterDiagnostics.qml
+PageHeaterLiveData 1.0 dbus-autoterm/qml/gui-v2/common/pages/settings/devicelist/heater/PageHeaterLiveData.qml
+PageHeaterRoomSensor 1.0 dbus-autoterm/qml/gui-v2/common/pages/settings/devicelist/heater/PageHeaterRoomSensor.qml
+PageHeaterSettings 1.0 dbus-autoterm/qml/gui-v2/common/pages/settings/devicelist/heater/PageHeaterSettings.qml
+PageHeaterTimer 1.0 dbus-autoterm/qml/gui-v2/common/pages/settings/devicelist/heater/PageHeaterTimer.qml
+PageHeaterTimers 1.0 dbus-autoterm/qml/gui-v2/common/pages/settings/devicelist/heater/PageHeaterTimers.qml

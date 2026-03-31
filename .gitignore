@@ -28,6 +28,7 @@ dbus-autoterm/ext/
 # Local tooling state
 .devbox/
 .direnv/
+.env
 .envrc.local
 
 # OS/editor noise

@@ -16,18 +16,19 @@
 ## Devbox Commands
 - Devbox shell bootstraps a project-local venv at `.devbox/venv` and prepends it to `PATH`, so `python`, `pip`, and installed console scripts come from the same environment.
 - `make package`: assemble the offline-installable `dbus-autoterm.tar.gz` artifact in `dist/` and populate ignored `dbus-autoterm/ext/`
-- `devbox run install:emulation`: install the emulation package with serial extras into the devbox venv
-- `devbox run install:dbus-autoterm`: install the driver package with serial extras into the devbox venv
-- `devbox run install:all`: install both packages into the devbox venv
-- `devbox run test` or `devbox run test:all`: run both project test suites
-- `devbox run test:emulation`: run the emulation tests
-- `devbox run test:dbus-autoterm`: run the driver tests, including the driver-to-emulation compatibility test
-- `devbox run run:emulation`: start the heater emulation CLI on a PTY for local development
-- `devbox run run:emulation:pty`: start the heater emulation CLI on a PTY for local development
-- `devbox run run:emulation:gpio`: start the heater emulation CLI on Raspberry Pi GPIO UART via `/dev/ttyAMA0`
-- `devbox run run:dbus-autoterm:dummy`: start the driver app with the dummy backend and mock D-Bus
-- `devbox run run:dbus-autoterm:serial -- --serial-device <device>`: start the driver app against a real serial device
-- `devbox run check:all`: byte-compile both projects
+- `devbox run emulation:test`: run the emulation tests
+- `devbox run dbus-autoterm:test`: run the driver tests, including the driver-to-emulation compatibility test
+- `devbox run test`: run both project test suites
+- `devbox run emulation:run:pty`: start the heater emulation CLI on a PTY for local development
+- `devbox run emulation:run:gpio`: start the heater emulation CLI on Raspberry Pi GPIO UART via `/dev/ttyAMA0`
+- `devbox run dbus-autoterm:run:dummy`: start the driver app with the dummy backend and mock D-Bus
+- `devbox run emulation:check`: byte-compile the emulation project
+- `devbox run dbus-autoterm:check`: byte-compile the driver project
+- `devbox run check`: byte-compile both projects
+- `devbox run package`: build the default offline package via `make package`
+- `devbox run deploy`: build and deploy the default package via `make deploy`
+- `devbox run package:native-gui`: build the native GUI variant via `make package:native-gui`
+- `devbox run deploy:native-gui`: build and deploy the native GUI variant via `make deploy:native-gui`
 
 ## Venus OS Driver Scripts
 - `dbus-autoterm/install.sh`: validate the direct-Python runtime, seed `config.ini`, create `/service/dbus-autoterm`, and persist reinstall via `/data/rc.local`

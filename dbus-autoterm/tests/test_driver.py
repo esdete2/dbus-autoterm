@@ -147,6 +147,32 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(service["/Temperatures/RoomSourceText"], "Salon")
         self.assertEqual(service["/Mode"], 1)
 
+    def test_power_level_change_preserves_room_sensor_context(self):
+        class _Reader:
+            selected_service = "auto"
+
+            def refresh(self):
+                return RoomTemperatureReading(
+                    temperature_c=20.5,
+                    source_text="Salon",
+                    service_name="com.victronenergy.temperature.ttyO1",
+                )
+
+            def available_services(self):
+                return []
+
+            def set_selected_service(self, service_name: str):
+                self.selected_service = service_name
+
+        _, service, app = self._build_app(room_temperature_reader=_Reader())
+
+        app.run_once()
+        service.set_value("/Settings/PowerLevel", 5)
+
+        self.assertEqual(service["/Temperatures/Room"], 20.5)
+        self.assertEqual(service["/Temperatures/RoomSourceText"], "Salon")
+        self.assertEqual(service["/Settings/PowerLevel"], 5)
+
     def test_room_temperature_service_selection_round_trips(self):
         class _Reader:
             def __init__(self):
@@ -234,6 +260,18 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(service["/ModeText"], "Ventilation")
         self.assertIn(service["/StateText"], {"starting ventilation", "ventilation"})
         self.assertEqual(service["/Status/FuelPumpFrequency"], 0.0)
+
+    def test_idle_ventilation_mode_survives_power_level_changes(self):
+        _, service, app = self._build_app()
+
+        service.set_value("/Mode", 2)
+        app.run_once()
+        service.set_value("/Settings/PowerLevel", 4)
+        app.run_once()
+
+        self.assertEqual(service["/Mode"], 2)
+        self.assertEqual(service["/ModeText"], "Ventilation")
+        self.assertEqual(service["/Settings/PowerLevel"], 4)
 
     def test_timer_paths_round_trip(self):
         _, service, _ = self._build_app()
